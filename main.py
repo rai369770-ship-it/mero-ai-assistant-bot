@@ -210,14 +210,14 @@ async def webhook(request: Request):
                 return JSONResponse({"ok": True})
             await send_message(chat_id, "🎨 Generating image... Please wait.")
             encoded_prompt = urllib.parse.quote(prompt)
-            image_api_url = f"https://yabes-api.pages.dev/api/ai/image/imagen3-0?prompt={encoded_prompt}&ratio=16%3A9"
+            image_api_url = f"https://yabes-api.pages.dev/api/ai/image/dalle?prompt=={encoded_prompt}"
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.get(image_api_url)
                     if response.status_code == 200:
                         resp_data = response.json()
-                        if resp_data.get("success") and "url" in resp_data:
-                            await send_photo(chat_id, resp_data["url"], "Here's your AI-generated image.")
+                        if resp_data.get("success") and "output" in resp_data:
+                            await send_photo(chat_id, resp_data["output"], "Here's your AI-generated image.")
                         else:
                             await send_message(chat_id, "Failed to generate image.")
                     else:
