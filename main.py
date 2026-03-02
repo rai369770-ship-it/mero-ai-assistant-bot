@@ -6,7 +6,7 @@ import json
 
 app = FastAPI()
 
-BOT_TOKEN = "8424346441:AAF7YxEtUeKvuNZ_nqGpEG2XVCwhhXBqFxU"
+BOT_TOKEN = "8655216165:AAEoDExRbxAmZVxGL9H0na4hziBEv6I-0RA"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POOL_API = "https://mainsite-kcvz.onrender.com/tafb/key_pool.json?etag=1&n=2&client=key&maxage=1200"
 MODEL = "gemini-2.5-flash"
