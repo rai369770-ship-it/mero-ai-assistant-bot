@@ -462,6 +462,7 @@ async def webhook(request: Request):
                 "📜 <b>Chat History</b> — <code>/history</code> to view your conversation\n"
                 "🗑️ <b>Clear Chat</b> — <code>/clear</code> to start fresh\n"
                 "🧹 <b>Clear Image</b> — <code>/cls</code> to clear stored image\n"
+                "💬 <b>Feedback</b> — <code>/feedback &lt;your feedback&gt;</code> to send feedback to admin\n"
                 "🚪 <b>Exit</b> — <code>/exit</code> to remove your data\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
                 "I remember your last 5 conversations for context.\n"
@@ -567,9 +568,10 @@ async def webhook(request: Request):
             users = get_all_users()
             success_count = 0
             fail_count = 0
+            broadcast_text = f"Messages for all users by admin: {broadcast_msg}"
             for uid in users:
                 try:
-                    result = await send_message(int(uid), f"📢 <b>Broadcast:</b>\n\n{broadcast_msg}", parse_mode="HTML")
+                    result = await send_message(int(uid), broadcast_text)
                     if result and result.get("ok"):
                         success_count += 1
                     else:
@@ -577,6 +579,28 @@ async def webhook(request: Request):
                 except Exception:
                     fail_count += 1
             await send_message(chat_id, f"📢 Broadcast complete.\n✅ Sent: {success_count}\n❌ Failed: {fail_count}", parse_mode="HTML")
+            return JSONResponse({"ok": True})
+
+        if text.startswith("/feedback"):
+            ensure_user(chat_id, name)
+            feedback_text = text.replace("/feedback", "", 1).strip()
+            if not feedback_text:
+                await send_message(chat_id, "Please provide your feedback after /feedback.\n\nExample: <code>/feedback This bot is amazing!</code>", parse_mode="HTML")
+                return JSONResponse({"ok": True})
+            feedback_message = (
+                f"📬 <b>New Feedback Received</b>\n\n"
+                f"👤 <b>From:</b> {escape_html(name)}\n"
+                f"🆔 <b>User ID:</b> <code>{chat_id}</code>\n\n"
+                f"💬 <b>Feedback:</b>\n{escape_html(feedback_text)}"
+            )
+            try:
+                result = await send_message(ADMIN_ID, feedback_message, parse_mode="HTML")
+                if result and result.get("ok"):
+                    await send_message(chat_id, "✅ Your feedback has been sent to the admin. Thank you!", parse_mode="HTML")
+                else:
+                    await send_message(chat_id, "❌ Failed to send your feedback. Please try again later.")
+            except Exception:
+                await send_message(chat_id, "❌ An error occurred while sending your feedback. Please try again later.")
             return JSONResponse({"ok": True})
 
         if text.startswith("/imagine"):
