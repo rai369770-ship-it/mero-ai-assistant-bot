@@ -6,6 +6,7 @@ import json
 import re
 import os
 import redis
+import base64
 
 app = FastAPI()
 
@@ -13,26 +14,59 @@ BOT_TOKEN = "8655216165:AAEoDExRbxAmZVxGL9H0na4hziBEv6I-0RA"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POOL_API = "https://sr-pool-api-5bm.pages.dev"
 MODEL = "gemini-2.5-flash"
-SYSTEM_TEXT = "You're Mero AI assistant developed by Sujan Rai. You can analyze YouTube videos, generate images, answer questions, search the web, browse URLs, write code, translate languages, summarize text, solve math problems, and have natural conversations. Always provide helpful, accurate, and well-structured responses. you can show emotions. you've emotions."
+ADMIN_ID = 7026190306
 
 REDIS_URL = os.environ.get("REDIS_URL", "")
 r = redis.from_url(REDIS_URL, decode_responses=True)
 
 api_keys = []
 
-MAX_HISTORY = 30
+MAX_HISTORY = 10
 CONTEXT_SIZE = 5
+
+image_store = {}
+
+
+def get_system_text(name):
+    return (
+        f"You're Mero AI assistant developed by Sujan Rai. "
+        f"User's name: {name}. "
+        f"You can analyze YouTube videos, generate images, answer questions, search the web, "
+        f"browse URLs, write code, translate languages, summarize text, solve math problems, "
+        f"analyze images, transcribe voice messages, and have natural conversations. "
+        f"Always provide helpful, accurate, and well-structured responses. "
+        f"You can show emotions. You have emotions."
+    )
 
 
 def get_history_key(chat_id):
     return f"chat:{chat_id}:history"
 
 
+def save_user(user_id, name):
+    r.hset("totalUsers", str(user_id), name)
+
+
+def user_exists(user_id):
+    return r.hexists("totalUsers", str(user_id))
+
+
+def remove_user(user_id):
+    r.hdel("totalUsers", str(user_id))
+    r.delete(get_history_key(user_id))
+    if str(user_id) in image_store:
+        del image_store[str(user_id)]
+
+
+def get_all_users():
+    return r.hgetall("totalUsers")
+
+
 def save_message(chat_id, role, text):
     key = get_history_key(chat_id)
     count = r.llen(key)
     if count >= MAX_HISTORY * 2:
-        r.delete(key)
+        r.ltrim(key, -((MAX_HISTORY - 1) * 2), -1)
     entry = json.dumps({"role": role, "text": text})
     r.rpush(key, entry)
 
@@ -55,8 +89,7 @@ def get_recent_history(chat_id, count=CONTEXT_SIZE):
 
 
 def clear_history(chat_id):
-    key = get_history_key(chat_id)
-    r.delete(key)
+    r.delete(get_history_key(chat_id))
 
 
 def escape_html(text):
@@ -83,7 +116,7 @@ def markdown_to_html(text):
             in_code_block = False
             code_content = escape_html("\n".join(code_lines))
             if code_lang:
-                result.append(f"<pre><code class=\"language-{escape_html(code_lang)}\">{code_content}</code></pre>")
+                result.append(f'<pre><code class="language-{escape_html(code_lang)}">{code_content}</code></pre>')
             else:
                 result.append(f"<pre>{code_content}</pre>")
             continue
@@ -99,7 +132,6 @@ def markdown_to_html(text):
         processed = re.sub(r"__(.+?)__", r"<u>\1</u>", processed)
         processed = re.sub(r"~~(.+?)~~", r"<s>\1</s>", processed)
         processed = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', processed)
-
         result.append(processed)
 
     if in_code_block:
@@ -135,6 +167,20 @@ async def send_photo(chat_id, photo_url, caption=None):
     async with httpx.AsyncClient(timeout=60.0) as client:
         response = await client.post(url, json=payload)
         return response.json()
+
+
+async def download_telegram_file(file_id):
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        file_info_resp = await client.get(f"{TELEGRAM_API}/getFile?file_id={file_id}")
+        file_info = file_info_resp.json()
+        if not file_info.get("ok"):
+            return None
+        file_path = file_info["result"]["file_path"]
+        download_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+        file_resp = await client.get(download_url)
+        if file_resp.status_code == 200:
+            return file_resp.content
+        return None
 
 
 async def fetch_api_keys():
@@ -174,35 +220,23 @@ async def try_api_call(body_json, tried=None):
         return None, f"API error {response.status_code}"
 
 
-def build_body(history_messages, current_text, youtube_url=None):
+def build_body(history_messages, current_parts, system_text, use_tools=True):
     contents = []
-
     for msg in history_messages:
         role = "user" if msg["role"] == "user" else "model"
         contents.append({"role": role, "parts": [{"text": msg.get("text", "")}]})
+    contents.append({"role": "user", "parts": current_parts})
 
-    if youtube_url:
-        contents.append({
-            "role": "user",
-            "parts": [
-                {"text": current_text},
-                {"fileData": {"mimeType": "video/mp4", "fileUri": youtube_url}}
-            ]
-        })
-        return {
-            "system_instruction": {"parts": [{"text": SYSTEM_TEXT}]},
-            "contents": contents,
-            "generationConfig": {"maxOutputTokens": 65536}
-        }
-
-    contents.append({"role": "user", "parts": [{"text": current_text}]})
-
-    return {
-        "system_instruction": {"parts": [{"text": SYSTEM_TEXT}]},
+    body = {
+        "system_instruction": {"parts": [{"text": system_text}]},
         "contents": contents,
-        "tools": [{"google_search": {}}, {"url_context": {}}],
         "generationConfig": {"maxOutputTokens": 65536}
     }
+
+    if use_tools:
+        body["tools"] = [{"google_search": {}}, {"url_context": {}}]
+
+    return body
 
 
 def extract_sources(data):
@@ -226,21 +260,6 @@ def extract_sources(data):
             if uri and uri not in seen:
                 seen.add(uri)
                 sources.append({"title": title.strip(), "url": uri.strip()})
-        if not chunks:
-            support = grounding.get("groundingSupports", [])
-            for s in support:
-                segment = s.get("segment", {})
-                refs = s.get("groundingChunkIndices", [])
-                for ref_chunk in grounding.get("groundingChunks", []):
-                    web = ref_chunk.get("web")
-                    if web:
-                        uri = web.get("uri", "")
-                        title = web.get("title", "Source")
-                        if uri and uri not in seen:
-                            seen.add(uri)
-                            sources.append({"title": title.strip(), "url": uri.strip()})
-            search_queries = grounding.get("webSearchQueries", [])
-            retrieval = grounding.get("retrievalQueries", [])
     except Exception:
         pass
     return sources
@@ -284,9 +303,24 @@ def format_response_with_sources(ai_text, sources):
     return html_text
 
 
-async def handle_gemini(chat_id, current_text, youtube_url=None):
+def get_user_name(message):
+    user = message.get("from", {})
+    first = user.get("first_name", "")
+    last = user.get("last_name", "")
+    name = f"{first} {last}".strip()
+    if not name:
+        name = user.get("username", "User")
+    return name
+
+
+def ensure_user(chat_id, name):
+    if not user_exists(chat_id):
+        save_user(chat_id, name)
+
+
+async def handle_gemini(chat_id, current_parts, system_text, use_tools=True):
     history = get_recent_history(chat_id, CONTEXT_SIZE)
-    body = build_body(history, current_text, youtube_url)
+    body = build_body(history, current_parts, system_text, use_tools)
     json_body = json.dumps(body)
 
     success = await fetch_api_keys()
@@ -299,7 +333,7 @@ async def handle_gemini(chat_id, current_text, youtube_url=None):
     content, err = await try_api_call(json_body)
     if content:
         ai_text, sources = extract_ai_text(content)
-        if ai_text and ai_text != "No response received from AI." and ai_text != "Failed to parse AI response.":
+        if ai_text and ai_text not in ("No response received from AI.", "Failed to parse AI response."):
             save_message(chat_id, "model", ai_text)
             formatted = format_response_with_sources(ai_text, sources)
             await send_message(chat_id, formatted, parse_mode="HTML")
@@ -326,6 +360,75 @@ async def webhook(request: Request):
 
         message = data["message"]
         chat_id = message["chat"]["id"]
+        name = get_user_name(message)
+
+        if message.get("video") or message.get("video_note") or message.get("document") or message.get("audio") or message.get("animation") or message.get("sticker"):
+            await send_message(chat_id, "⚠️ This attachment type is not supported right now. You can upload images or send voice messages instead.")
+            return JSONResponse({"ok": True})
+
+        if message.get("photo"):
+            ensure_user(chat_id, name)
+            photo_list = message["photo"]
+            best_photo = photo_list[-1]
+            file_id = best_photo["file_id"]
+            caption = message.get("caption", "").strip()
+            if not caption:
+                caption = "Describe this image in detail."
+
+            await send_message(chat_id, "🖼️ Analyzing image...")
+
+            image_data = await download_telegram_file(file_id)
+            if not image_data:
+                await send_message(chat_id, "Failed to download the image. Please try again.")
+                return JSONResponse({"ok": True})
+
+            encoded = base64.b64encode(image_data).decode("utf-8")
+            image_store[str(chat_id)] = encoded
+
+            save_message(chat_id, "user", f"[Image] {caption}")
+
+            parts = [
+                {"text": caption},
+                {"inlineData": {"mimeType": "image/jpeg", "data": encoded}}
+            ]
+
+            system_text = get_system_text(name)
+            await handle_gemini(chat_id, parts, system_text, use_tools=False)
+            return JSONResponse({"ok": True})
+
+        if message.get("voice"):
+            ensure_user(chat_id, name)
+            voice = message["voice"]
+            duration = voice.get("duration", 0)
+
+            if duration > 300:
+                await send_message(chat_id, "⚠️ Sorry, the voice message can only be recorded up to 5 minutes.")
+                return JSONResponse({"ok": True})
+
+            file_id = voice["file_id"]
+            mime_type = voice.get("mime_type", "audio/ogg")
+
+            await send_message(chat_id, "🎙️ Processing voice message...")
+
+            voice_data = await download_telegram_file(file_id)
+            if not voice_data:
+                await send_message(chat_id, "Failed to download the voice message. Please try again.")
+                return JSONResponse({"ok": True})
+
+            encoded_voice = base64.b64encode(voice_data).decode("utf-8")
+
+            save_message(chat_id, "user", "[Voice Message]")
+
+            prompt = "Transcribe this voice message, analyze it, and reply to it."
+
+            parts = [
+                {"text": prompt},
+                {"inlineData": {"mimeType": mime_type, "data": encoded_voice}}
+            ]
+
+            system_text = get_system_text(name)
+            await handle_gemini(chat_id, parts, system_text, use_tools=False)
+            return JSONResponse({"ok": True})
 
         if "text" not in message:
             return JSONResponse({"ok": True})
@@ -333,12 +436,24 @@ async def webhook(request: Request):
         text = message["text"]
 
         if text == "/start":
+            if user_exists(chat_id):
+                await send_message(
+                    chat_id,
+                    "👋 You're already using this bot! Type anything to continue chatting or /clear to start fresh.",
+                    parse_mode="HTML"
+                )
+                return JSONResponse({"ok": True})
+
+            save_user(chat_id, name)
             clear_history(chat_id)
             welcome = (
                 "✨ <b>Welcome to Mero AI Assistant!</b> ✨\n\n"
-                "Your intelligent companion powered by <b>Gemini 2.5 Flash</b> ⚡\n\n"
+                f"Hello, <b>{escape_html(name)}</b>! 🎉\n\n"
+                "Your intelligent companion powered by <b>Gemini Multimodal</b> ⚡\n\n"
                 "<b>Here's what I can do:</b>\n\n"
                 "💬 <b>Chat</b> — Just type anything to start a conversation\n"
+                "🖼️ <b>Image Analysis</b> — Send an image with or without a caption\n"
+                "🎙️ <b>Voice Messages</b> — Send a voice message (up to 5 min)\n"
                 "🎬 <b>YouTube Analysis</b> — <code>/youtube &lt;url&gt;</code> or <code>/youtube &lt;url&gt; &lt;prompt&gt;</code>\n"
                 "🎨 <b>Image Generation</b> — <code>/imagine &lt;description&gt;</code>\n"
                 "🌐 <b>Web Search</b> — Automatically searches when needed\n"
@@ -348,21 +463,44 @@ async def webhook(request: Request):
                 "📊 <b>Math &amp; Science</b> — Solve equations and explain concepts\n"
                 "📖 <b>Summarization</b> — Summarize articles, documents, or text\n"
                 "📜 <b>Chat History</b> — <code>/history</code> to view your conversation\n"
-                "🗑️ <b>Clear Chat</b> — <code>/clear</code> to start fresh\n\n"
+                "🗑️ <b>Clear Chat</b> — <code>/clear</code> to start fresh\n"
+                "🧹 <b>Clear Image</b> — <code>/cls</code> to clear stored image\n"
+                "🚪 <b>Exit</b> — <code>/exit</code> to remove your data\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
                 "I remember your last 5 conversations for context.\n"
-                "Up to 30 messages are stored in history.\n\n"
+                "Up to 10 messages are stored in history.\n\n"
                 "🚀 <i>Developed by Sujan Rai</i>"
             )
             await send_message(chat_id, welcome, parse_mode="HTML")
             return JSONResponse({"ok": True})
 
+        if text == "/exit":
+            if not user_exists(chat_id):
+                await send_message(chat_id, "You are not registered. Send /start first.")
+                return JSONResponse({"ok": True})
+            remove_user(chat_id)
+            await send_message(
+                chat_id,
+                "🚪 You have exited the bot successfully. Thanks for your support! Send /start anytime to come back.",
+                parse_mode="HTML"
+            )
+            return JSONResponse({"ok": True})
+
         if text == "/clear":
+            ensure_user(chat_id, name)
             clear_history(chat_id)
             await send_message(chat_id, "🗑️ Conversation cleared.", parse_mode="HTML")
             return JSONResponse({"ok": True})
 
+        if text == "/cls":
+            ensure_user(chat_id, name)
+            if str(chat_id) in image_store:
+                del image_store[str(chat_id)]
+            await send_message(chat_id, "🧹 Stored image cleared.", parse_mode="HTML")
+            return JSONResponse({"ok": True})
+
         if text == "/history":
+            ensure_user(chat_id, name)
             history = get_all_history(chat_id)
             if not history:
                 await send_message(chat_id, "📜 No conversation history found.")
@@ -370,7 +508,7 @@ async def webhook(request: Request):
 
             await send_message(chat_id, f"📜 <b>Your Conversation History ({len(history)} messages):</b>", parse_mode="HTML")
 
-            for i, msg in enumerate(history):
+            for msg in history:
                 role_label = "👤 You" if msg["role"] == "user" else "🤖 Mero AI"
                 msg_text = msg.get("text", "")
                 if len(msg_text) > 3000:
@@ -380,7 +518,72 @@ async def webhook(request: Request):
 
             return JSONResponse({"ok": True})
 
+        if text == "/total":
+            if chat_id != ADMIN_ID:
+                await send_message(chat_id, "The command was not recognized.")
+                return JSONResponse({"ok": True})
+            users = get_all_users()
+            total = len(users)
+            response_text = f"📊 <b>Total Users: {total}</b>\n\n"
+            for uid, uname in users.items():
+                response_text += f"🆔 <code>{uid}</code> — {escape_html(uname)}\n"
+            if not users:
+                response_text += "No users registered yet."
+            await send_message(chat_id, response_text, parse_mode="HTML")
+            return JSONResponse({"ok": True})
+
+        if text.startswith("/sendMessage"):
+            if chat_id != ADMIN_ID:
+                await send_message(chat_id, "The command was not recognized.")
+                return JSONResponse({"ok": True})
+            content = text.replace("/sendMessage", "", 1).strip()
+            if " - " not in content:
+                await send_message(chat_id, "Format: /sendMessage &lt;user_id&gt; - &lt;message&gt;", parse_mode="HTML")
+                return JSONResponse({"ok": True})
+            parts = content.split(" - ", 1)
+            target_id = parts[0].strip()
+            msg_content = parts[1].strip()
+            if not target_id.lstrip("-").isdigit():
+                await send_message(chat_id, "Invalid user ID.")
+                return JSONResponse({"ok": True})
+            if not user_exists(int(target_id)):
+                await send_message(chat_id, f"User <code>{target_id}</code> does not exist in the database.", parse_mode="HTML")
+                return JSONResponse({"ok": True})
+            try:
+                result = await send_message(int(target_id), f"📩 <b>Message from Admin:</b>\n\n{msg_content}", parse_mode="HTML")
+                if result and result.get("ok"):
+                    await send_message(chat_id, f"✅ Message sent to <code>{target_id}</code>.", parse_mode="HTML")
+                else:
+                    await send_message(chat_id, f"❌ Failed to send message to <code>{target_id}</code>.", parse_mode="HTML")
+            except Exception:
+                await send_message(chat_id, f"❌ Error sending message to <code>{target_id}</code>.", parse_mode="HTML")
+            return JSONResponse({"ok": True})
+
+        if text.startswith("/broadcast"):
+            if chat_id != ADMIN_ID:
+                await send_message(chat_id, "The command was not recognized.")
+                return JSONResponse({"ok": True})
+            broadcast_msg = text.replace("/broadcast", "", 1).strip()
+            if not broadcast_msg:
+                await send_message(chat_id, "Please provide a message after /broadcast.")
+                return JSONResponse({"ok": True})
+            users = get_all_users()
+            success_count = 0
+            fail_count = 0
+            for uid in users:
+                try:
+                    result = await send_message(int(uid), f"📢 <b>Broadcast:</b>\n\n{broadcast_msg}", parse_mode="HTML")
+                    if result and result.get("ok"):
+                        success_count += 1
+                    else:
+                        fail_count += 1
+                except Exception:
+                    fail_count += 1
+            await send_message(chat_id, f"📢 Broadcast complete.\n✅ Sent: {success_count}\n❌ Failed: {fail_count}", parse_mode="HTML")
+            return JSONResponse({"ok": True})
+
         if text.startswith("/imagine"):
+            ensure_user(chat_id, name)
             prompt = text.replace("/imagine", "", 1).strip()
             if not prompt:
                 await send_message(chat_id, "Please provide an image description after /imagine.")
@@ -410,6 +613,7 @@ async def webhook(request: Request):
             return JSONResponse({"ok": True})
 
         if text.startswith("/youtube"):
+            ensure_user(chat_id, name)
             yt_input = text.replace("/youtube", "", 1).strip()
             if not yt_input:
                 await send_message(chat_id, "Please provide a YouTube URL after /youtube.")
@@ -424,21 +628,35 @@ async def webhook(request: Request):
             user_text = f"{prompt} [YouTube: {yt_url}]"
             save_message(chat_id, "user", user_text)
 
-            await handle_gemini(chat_id, prompt, youtube_url=yt_url)
+            current_parts = [
+                {"text": prompt},
+                {"fileData": {"mimeType": "video/mp4", "fileUri": yt_url}}
+            ]
 
+            system_text = get_system_text(name)
+            await handle_gemini(chat_id, current_parts, system_text, use_tools=False)
             return JSONResponse({"ok": True})
 
         if text.startswith("/"):
-            await send_message(chat_id, "Unknown command. Type /start to see available commands.")
+            await send_message(chat_id, "The command was not recognized. Type /start to see available commands.")
             return JSONResponse({"ok": True})
 
+        ensure_user(chat_id, name)
         trimmed = text.strip()
 
         await send_message(chat_id, "🤖 Thinking...")
 
         save_message(chat_id, "user", trimmed)
 
-        await handle_gemini(chat_id, trimmed)
+        current_parts = [{"text": trimmed}]
+
+        stored_image = image_store.get(str(chat_id))
+        if stored_image:
+            current_parts.append({"inlineData": {"mimeType": "image/jpeg", "data": stored_image}})
+
+        system_text = get_system_text(name)
+        use_tools = stored_image is None
+        await handle_gemini(chat_id, current_parts, system_text, use_tools=use_tools)
 
         return JSONResponse({"ok": True})
 
