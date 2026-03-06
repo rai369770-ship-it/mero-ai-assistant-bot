@@ -4,21 +4,110 @@ import httpx
 import urllib.parse
 import json
 import re
+import os
+import redis
 
 app = FastAPI()
 
 BOT_TOKEN = "8655216165:AAEoDExRbxAmZVxGL9H0na4hziBEv6I-0RA"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
-POOL_API = "https://mainsite-kcvz.onrender.com/tafb/key_pool.json?etag=1&n=2&client=key&maxage=1200"
+POOL_API = "https://sr-pool-api.pages.dev"
 MODEL = "gemini-2.5-flash"
-SYSTEM_TEXT = "You're Mero AI assistant developed by Sujan Rai. You can analyze YouTube, generate images, answer questions, search the web and browse URLs. Always format responses using Markdown."
+SYSTEM_TEXT = "You're Mero AI assistant developed by Sujan Rai. You can analyze YouTube videos, generate images, answer questions, search the web, browse URLs, write code, translate languages, summarize text, solve math problems, and have natural conversations. Always provide helpful, accurate, and well-structured responses. you can show emotions. you've emotions."
+
+REDIS_URL = os.environ.get("REDIS_URL", "")
+r = redis.from_url(REDIS_URL, decode_responses=True)
 
 api_keys = []
-conversations = {}
 
-def escape_markdown_v2(text):
-    escape_chars = r"_*[]()~`>#+-=|{}.!"
-    return re.sub(f"([{re.escape(escape_chars)}])", r"\\\1", text)
+MAX_HISTORY = 30
+CONTEXT_SIZE = 5
+
+
+def get_history_key(chat_id):
+    return f"chat:{chat_id}:history"
+
+
+def save_message(chat_id, role, text):
+    key = get_history_key(chat_id)
+    count = r.llen(key)
+    if count >= MAX_HISTORY * 2:
+        r.delete(key)
+    entry = json.dumps({"role": role, "text": text})
+    r.rpush(key, entry)
+
+
+def get_all_history(chat_id):
+    key = get_history_key(chat_id)
+    items = r.lrange(key, 0, -1)
+    return [json.loads(item) for item in items]
+
+
+def get_recent_history(chat_id, count=CONTEXT_SIZE):
+    key = get_history_key(chat_id)
+    total = r.llen(key)
+    if total == 0:
+        return []
+    pair_count = count * 2
+    start = max(0, total - pair_count)
+    items = r.lrange(key, start, -1)
+    return [json.loads(item) for item in items]
+
+
+def clear_history(chat_id):
+    key = get_history_key(chat_id)
+    r.delete(key)
+
+
+def escape_html(text):
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+    return text
+
+
+def markdown_to_html(text):
+    lines = text.split("\n")
+    result = []
+    in_code_block = False
+    code_lang = ""
+    code_lines = []
+
+    for line in lines:
+        if not in_code_block and re.match(r"^```(\w*)", line):
+            in_code_block = True
+            code_lang = re.match(r"^```(\w*)", line).group(1)
+            code_lines = []
+            continue
+        if in_code_block and line.strip() == "```":
+            in_code_block = False
+            code_content = escape_html("\n".join(code_lines))
+            if code_lang:
+                result.append(f"<pre><code class=\"language-{escape_html(code_lang)}\">{code_content}</code></pre>")
+            else:
+                result.append(f"<pre>{code_content}</pre>")
+            continue
+        if in_code_block:
+            code_lines.append(line)
+            continue
+
+        processed = escape_html(line)
+        processed = re.sub(r"`([^`]+)`", r"<code>\1</code>", processed)
+        processed = re.sub(r"\*\*\*(.+?)\*\*\*", r"<b><i>\1</i></b>", processed)
+        processed = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", processed)
+        processed = re.sub(r"(?<!\*)\*([^*]+?)\*(?!\*)", r"<i>\1</i>", processed)
+        processed = re.sub(r"__(.+?)__", r"<u>\1</u>", processed)
+        processed = re.sub(r"~~(.+?)~~", r"<s>\1</s>", processed)
+        processed = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', processed)
+
+        result.append(processed)
+
+    if in_code_block:
+        code_content = escape_html("\n".join(code_lines))
+        result.append(f"<pre>{code_content}</pre>")
+
+    return "\n".join(result)
+
 
 async def send_message(chat_id, text, parse_mode=None):
     url = f"{TELEGRAM_API}/sendMessage"
@@ -37,14 +126,16 @@ async def send_message(chat_id, text, parse_mode=None):
                 result = response.json()
     return result
 
+
 async def send_photo(chat_id, photo_url, caption=None):
     url = f"{TELEGRAM_API}/sendPhoto"
     payload = {"chat_id": chat_id, "photo": photo_url}
     if caption:
         payload["caption"] = caption
     async with httpx.AsyncClient(timeout=60.0) as client:
-        response = await client.post(url, data=payload)
+        response = await client.post(url, json=payload)
         return response.json()
+
 
 async def fetch_api_keys():
     global api_keys
@@ -56,6 +147,7 @@ async def fetch_api_keys():
                 api_keys = keys
                 return True
     return False
+
 
 async def try_api_call(body_json, tried=None):
     global api_keys
@@ -79,16 +171,13 @@ async def try_api_call(body_json, tried=None):
         for i in range(len(api_keys)):
             if i not in tried:
                 return await try_api_call(body_json, tried)
-        return None, "All API keys exhausted"
+        return None, f"API error {response.status_code}"
 
-def get_messages(chat_id):
-    if chat_id not in conversations:
-        conversations[chat_id] = []
-    return conversations[chat_id]
 
-def build_body(messages, trimmed, youtube_url=None):
+def build_body(history_messages, current_text, youtube_url=None):
     contents = []
-    for msg in messages[:-1]:
+
+    for msg in history_messages:
         role = "user" if msg["role"] == "user" else "model"
         contents.append({"role": role, "parts": [{"text": msg.get("text", "")}]})
 
@@ -96,7 +185,7 @@ def build_body(messages, trimmed, youtube_url=None):
         contents.append({
             "role": "user",
             "parts": [
-                {"text": trimmed},
+                {"text": current_text},
                 {"fileData": {"mimeType": "video/mp4", "fileUri": youtube_url}}
             ]
         })
@@ -106,7 +195,7 @@ def build_body(messages, trimmed, youtube_url=None):
             "generationConfig": {"maxOutputTokens": 65536}
         }
 
-    contents.append({"role": "user", "parts": [{"text": trimmed}]})
+    contents.append({"role": "user", "parts": [{"text": current_text}]})
 
     return {
         "system_instruction": {"parts": [{"text": SYSTEM_TEXT}]},
@@ -115,87 +204,118 @@ def build_body(messages, trimmed, youtube_url=None):
         "generationConfig": {"maxOutputTokens": 65536}
     }
 
+
 def extract_sources(data):
     sources = []
     seen = set()
     try:
-        candidate = data["candidates"][0]
-        grounding = candidate.get("groundingMetadata", {})
+        candidates = data.get("candidates", [])
+        if not candidates:
+            return sources
+        candidate = candidates[0]
+        grounding = candidate.get("groundingMetadata")
+        if not grounding:
+            return sources
         chunks = grounding.get("groundingChunks", [])
         for chunk in chunks:
             web = chunk.get("web")
             if not web:
                 continue
-            url = web.get("uri")
-            title = web.get("title") or "Source"
-            if url and url not in seen:
-                seen.add(url)
-                sources.append({"title": title.strip(), "url": url.strip()})
+            uri = web.get("uri", "")
+            title = web.get("title", "Source")
+            if uri and uri not in seen:
+                seen.add(uri)
+                sources.append({"title": title.strip(), "url": uri.strip()})
+        if not chunks:
+            support = grounding.get("groundingSupports", [])
+            for s in support:
+                segment = s.get("segment", {})
+                refs = s.get("groundingChunkIndices", [])
+                for ref_chunk in grounding.get("groundingChunks", []):
+                    web = ref_chunk.get("web")
+                    if web:
+                        uri = web.get("uri", "")
+                        title = web.get("title", "Source")
+                        if uri and uri not in seen:
+                            seen.add(uri)
+                            sources.append({"title": title.strip(), "url": uri.strip()})
+            search_queries = grounding.get("webSearchQueries", [])
+            retrieval = grounding.get("retrievalQueries", [])
     except Exception:
         pass
     return sources
 
+
 def extract_ai_text(content):
-    data = json.loads(content)
-    if data.get("candidates"):
-        candidate = data["candidates"][0]
-        ai_text = ""
-        parts = candidate.get("content", {}).get("parts", [])
-        for p in parts:
-            if p.get("text"):
-                if ai_text:
-                    ai_text += "\n"
-                ai_text += p["text"]
-        if not ai_text:
-            return "No response received from AI.", []
-        sources = extract_sources(data)
-        return ai_text, sources
-    return None, []
+    try:
+        data = json.loads(content)
+    except json.JSONDecodeError:
+        return "Failed to parse AI response.", []
+
+    candidates = data.get("candidates", [])
+    if not candidates:
+        return "No response received from AI.", []
+
+    candidate = candidates[0]
+    parts = candidate.get("content", {}).get("parts", [])
+    ai_text = ""
+    for p in parts:
+        if p.get("text"):
+            if ai_text:
+                ai_text += "\n"
+            ai_text += p["text"]
+
+    if not ai_text:
+        return "No response received from AI.", []
+
+    sources = extract_sources(data)
+    return ai_text, sources
+
 
 def format_response_with_sources(ai_text, sources):
+    html_text = markdown_to_html(ai_text)
     if not sources:
-        return ai_text
-    result = ai_text + "\n\n📌 Sources:\n"
+        return html_text
+    html_text += "\n\n📌 <b>Sources:</b>\n"
     for s in sources:
-        title = escape_markdown_v2(s["title"])
+        title = escape_html(s["title"])
         url = s["url"]
-        result += f"• [{title}]({url})\n"
-    return result
+        html_text += f'• <a href="{url}">{title}</a>\n'
+    return html_text
 
-async def handle_gemini(chat_id, messages, trimmed, youtube_url=None):
-    body = build_body(messages, trimmed, youtube_url)
+
+async def handle_gemini(chat_id, current_text, youtube_url=None):
+    history = get_recent_history(chat_id, CONTEXT_SIZE)
+    body = build_body(history, current_text, youtube_url)
     json_body = json.dumps(body)
+
     success = await fetch_api_keys()
     if not success:
-        error_msg = {"role": "model", "text": "Could not fetch API keys. Please check your internet connection."}
-        messages.append(error_msg)
-        await send_message(chat_id, error_msg["text"])
+        error_msg = "Could not fetch API keys. Please try again later."
+        save_message(chat_id, "model", error_msg)
+        await send_message(chat_id, error_msg)
         return
 
     content, err = await try_api_call(json_body)
     if content:
-        result = extract_ai_text(content)
-        if result[0] and result[0] != "No response received from AI.":
-            ai_text, sources = result
+        ai_text, sources = extract_ai_text(content)
+        if ai_text and ai_text != "No response received from AI." and ai_text != "Failed to parse AI response.":
+            save_message(chat_id, "model", ai_text)
             formatted = format_response_with_sources(ai_text, sources)
-            messages.append({"role": "model", "text": ai_text})
-            escaped = escape_markdown_v2(formatted)
-            await send_message(chat_id, escaped, parse_mode="MarkdownV2")
-        elif result[0] == "No response received from AI.":
-            messages.append({"role": "model", "text": result[0]})
-            await send_message(chat_id, result[0])
+            await send_message(chat_id, formatted, parse_mode="HTML")
         else:
-            error = "Could not parse AI response. Please try again."
-            messages.append({"role": "model", "text": error})
-            await send_message(chat_id, error)
+            save_message(chat_id, "model", ai_text)
+            await send_message(chat_id, ai_text)
     else:
         error = f"Error: {err or 'Unknown error occurred'}"
-        messages.append({"role": "model", "text": error})
+        save_message(chat_id, "model", error)
         await send_message(chat_id, error)
+
 
 @app.get("/")
 async def home():
     return {"status": "ok", "message": "Mero AI Assistant Bot is running!"}
+
 
 @app.post("/webhook")
 async def webhook(request: Request):
@@ -213,37 +333,63 @@ async def webhook(request: Request):
         text = message["text"]
 
         if text == "/start":
-            conversations[chat_id] = []
+            clear_history(chat_id)
             welcome = (
-                "✨ *Welcome to Mero AI Assistant\\!* ✨\n\n"
-                "Your intelligent companion powered by *Gemini* ⚡\n\n"
-                "💬 *Chat* — Type anything\n"
-                "🎬 *YouTube* — `/youtube <url>` or `/youtube <url> <prompt>`\n"
-                "🎨 *Image Gen* — `/imagine <description>`\n"
-                "🌐 *Web Search* — Automatic when needed\n"
-                "🔗 *URL Browse* — Send any URL\n"
-                "🗑️ *Clear* — `/clear`\n\n"
+                "✨ <b>Welcome to Mero AI Assistant!</b> ✨\n\n"
+                "Your intelligent companion powered by <b>Gemini 2.5 Flash</b> ⚡\n\n"
+                "<b>Here's what I can do:</b>\n\n"
+                "💬 <b>Chat</b> — Just type anything to start a conversation\n"
+                "🎬 <b>YouTube Analysis</b> — <code>/youtube &lt;url&gt;</code> or <code>/youtube &lt;url&gt; &lt;prompt&gt;</code>\n"
+                "🎨 <b>Image Generation</b> — <code>/imagine &lt;description&gt;</code>\n"
+                "🌐 <b>Web Search</b> — Automatically searches when needed\n"
+                "🔗 <b>URL Browsing</b> — Send any URL to get a summary\n"
+                "📝 <b>Code Writing</b> — Ask me to write code in any language\n"
+                "🌍 <b>Translation</b> — Translate text between languages\n"
+                "📊 <b>Math &amp; Science</b> — Solve equations and explain concepts\n"
+                "📖 <b>Summarization</b> — Summarize articles, documents, or text\n"
+                "📜 <b>Chat History</b> — <code>/history</code> to view your conversation\n"
+                "🗑️ <b>Clear Chat</b> — <code>/clear</code> to start fresh\n\n"
                 "━━━━━━━━━━━━━━━━━━━━━\n"
-                "🚀 _Developed by Sujan Rai_"
+                "I remember your last 5 conversations for context.\n"
+                "Up to 30 messages are stored in history.\n\n"
+                "🚀 <i>Developed by Sujan Rai</i>"
             )
-            await send_message(chat_id, welcome, parse_mode="MarkdownV2")
+            await send_message(chat_id, welcome, parse_mode="HTML")
             return JSONResponse({"ok": True})
 
         if text == "/clear":
-            conversations[chat_id] = []
-            await send_message(chat_id, "🗑️ Conversation cleared\\.", parse_mode="MarkdownV2")
+            clear_history(chat_id)
+            await send_message(chat_id, "🗑️ Conversation cleared.", parse_mode="HTML")
+            return JSONResponse({"ok": True})
+
+        if text == "/history":
+            history = get_all_history(chat_id)
+            if not history:
+                await send_message(chat_id, "📜 No conversation history found.")
+                return JSONResponse({"ok": True})
+
+            await send_message(chat_id, f"📜 <b>Your Conversation History ({len(history)} messages):</b>", parse_mode="HTML")
+
+            for i, msg in enumerate(history):
+                role_label = "👤 You" if msg["role"] == "user" else "🤖 Mero AI"
+                msg_text = msg.get("text", "")
+                if len(msg_text) > 3000:
+                    msg_text = msg_text[:3000] + "..."
+                formatted = f"<b>{role_label}:</b>\n{escape_html(msg_text)}"
+                await send_message(chat_id, formatted, parse_mode="HTML")
+
             return JSONResponse({"ok": True})
 
         if text.startswith("/imagine"):
             prompt = text.replace("/imagine", "", 1).strip()
             if not prompt:
-                await send_message(chat_id, "Provide an image description\\.", parse_mode="MarkdownV2")
+                await send_message(chat_id, "Please provide an image description after /imagine.")
                 return JSONResponse({"ok": True})
 
-            await send_message(chat_id, "🎨 Generating image\\.\\.\\.", parse_mode="MarkdownV2")
+            await send_message(chat_id, "🎨 Generating image...")
 
             encoded_prompt = urllib.parse.quote(prompt)
-            image_api_url = f"https://yabes-api.pages.dev/api/ai/image/dalle?prompt=={encoded_prompt}"
+            image_api_url = f"https://yabes-api.pages.dev/api/ai/image/dalle?prompt={encoded_prompt}"
 
             try:
                 async with httpx.AsyncClient(timeout=60.0) as client:
@@ -251,46 +397,48 @@ async def webhook(request: Request):
                     if response.status_code == 200:
                         resp_data = response.json()
                         if resp_data.get("success") and "output" in resp_data:
-                            await send_photo(chat_id, resp_data["output"], "Here's your AI-generated image.")
+                            await send_photo(chat_id, resp_data["output"], f"🎨 {prompt}")
+                            save_message(chat_id, "user", f"/imagine {prompt}")
+                            save_message(chat_id, "model", f"Generated image for: {prompt}")
                         else:
-                            await send_message(chat_id, "Image generation failed.")
+                            await send_message(chat_id, "Image generation failed. Please try again.")
                     else:
-                        await send_message(chat_id, f"Image API error {response.status_code}")
+                        await send_message(chat_id, f"Image API error: {response.status_code}")
             except Exception as e:
-                await send_message(chat_id, str(e))
+                await send_message(chat_id, f"Image generation error: {str(e)}")
 
             return JSONResponse({"ok": True})
 
         if text.startswith("/youtube"):
             yt_input = text.replace("/youtube", "", 1).strip()
             if not yt_input:
-                await send_message(chat_id, "Provide a YouTube URL\\.", parse_mode="MarkdownV2")
+                await send_message(chat_id, "Please provide a YouTube URL after /youtube.")
                 return JSONResponse({"ok": True})
 
             parts = yt_input.split(None, 1)
             yt_url = parts[0]
-            prompt = parts[1] if len(parts) > 1 else "Analyze this YouTube video."
+            prompt = parts[1] if len(parts) > 1 else "Analyze this YouTube video in detail."
 
-            await send_message(chat_id, "🎬 Processing video\\.\\.\\.", parse_mode="MarkdownV2")
+            await send_message(chat_id, "🎬 Processing video...")
 
-            msgs = get_messages(chat_id)
-            msgs.append({"role": "user", "text": f"{prompt} [YouTube: {yt_url}]"})
+            user_text = f"{prompt} [YouTube: {yt_url}]"
+            save_message(chat_id, "user", user_text)
 
-            await handle_gemini(chat_id, msgs, prompt, youtube_url=yt_url)
+            await handle_gemini(chat_id, prompt, youtube_url=yt_url)
 
             return JSONResponse({"ok": True})
 
         if text.startswith("/"):
+            await send_message(chat_id, "Unknown command. Type /start to see available commands.")
             return JSONResponse({"ok": True})
 
         trimmed = text.strip()
 
-        await send_message(chat_id, "🤖 Thinking\\.\\.\\.", parse_mode="MarkdownV2")
+        await send_message(chat_id, "🤖 Thinking...")
 
-        msgs = get_messages(chat_id)
-        msgs.append({"role": "user", "text": trimmed})
+        save_message(chat_id, "user", trimmed)
 
-        await handle_gemini(chat_id, msgs, trimmed)
+        await handle_gemini(chat_id, trimmed)
 
         return JSONResponse({"ok": True})
 
