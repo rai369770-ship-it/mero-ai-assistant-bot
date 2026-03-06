@@ -11,7 +11,7 @@ app = FastAPI()
 
 BOT_TOKEN = "8655216165:AAEoDExRbxAmZVxGL9H0na4hziBEv6I-0RA"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
-POOL_API = "https://sr-pool-api.pages.dev"
+POOL_API = "https://sr-pool-api-5bm.pages.dev"
 MODEL = "gemini-2.5-flash"
 SYSTEM_TEXT = "You're Mero AI assistant developed by Sujan Rai. You can analyze YouTube videos, generate images, answer questions, search the web, browse URLs, write code, translate languages, summarize text, solve math problems, and have natural conversations. Always provide helpful, accurate, and well-structured responses. you can show emotions. you've emotions."
 
