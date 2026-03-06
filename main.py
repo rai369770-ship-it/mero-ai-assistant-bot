@@ -115,7 +115,8 @@ def markdown_to_html(text):
         if in_code_block and line.strip() == "```":
             in_code_block = False
             code_content = escape_html("\n".join(code_lines))
-            result.append(f"<pre>{code_content}</pre>")            continue
+            result.append(f"<pre>{code_content}</pre>")
+            continue
         if in_code_block:
             code_lines.append(line)
             continue
