@@ -32,7 +32,7 @@ functions and intensions.
 sendNormalMessage(query).
 Sends normal message. The last query is already stored in my query variable.
 sendYouTube(prompt, url).
-These are not stored in my variables. So, extract prompt and url from user prompt and pass to the function.
+These are not stored in my variables. So, extract prompt and url from user prompt and pass to the function properly. use this function if user gives YouTube link and prompt.
 generateImage(query).
 The last query is already stored in my query variable.
 Understand the user prompt and pass functions properly.
