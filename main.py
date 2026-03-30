@@ -14,7 +14,7 @@ app = FastAPI()
 BOT_TOKEN = "8655216165:AAEoDExRbxAmZVxGL9H0na4hziBEv6I-0RA"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POOL_API = "https://sr-pool-api-5bm.pages.dev"
-MODEL = "gemini-2.5-flash-light"
+MODEL = "gemini-2.5-flash-lite"
 ADMIN_ID = 7026190306
 
 REDIS_URL = os.environ.get("REDIS_URL", "")
