@@ -12,6 +12,7 @@ from database import (
     get_user_voice, set_user_voice, get_user_system, set_user_system,
     clear_user_system, get_user_temp, set_user_temp,
     get_user_model, set_user_model,
+    get_credit_message, set_credit_message,
     ensure_user, is_admin, check_banned,
 )
 from message import (
@@ -293,7 +294,7 @@ async def webhook(request: Request):
             if cb_data == "feedback_prompt":
                 await answer_callback(cb_id)
                 set_reply_state(cid, -1)
-                await send_message(cid, "💬 Type your feedback:", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, "💬 Write your feedback or record your voice.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
             if cb_data == "cancel_reply":
@@ -314,6 +315,36 @@ async def webhook(request: Request):
                 await edit_message(cid, mid, "⚙️ <b>Settings</b>", parse_mode="HTML", reply_markup=kb)
                 return JSONResponse({"ok": True})
 
+
+            if cb_data == "developer_credits":
+                await answer_callback(cb_id)
+                credit_message = get_credit_message()
+                if is_admin(cid):
+                    await edit_message(
+                        cid,
+                        mid,
+                        f"🛠 <b>Developer &amp; Credits</b>\n\n{escape_html(credit_message)}",
+                        parse_mode="HTML",
+                        reply_markup=ikb([[btn("➕ Add New Message", "set_credit_message")], [btn("🔙 Back", "back_settings")]]),
+                    )
+                else:
+                    await edit_message(
+                        cid,
+                        mid,
+                        f"🛠 <b>Developer &amp; Credits</b>\n\n{escape_html(credit_message)}",
+                        parse_mode="HTML",
+                        reply_markup=ikb([[btn("🔙 Back", "back_settings")]]),
+                    )
+                return JSONResponse({"ok": True})
+
+            if cb_data == "set_credit_message":
+                if not is_admin(cid):
+                    await answer_callback(cb_id, "Unauthorized")
+                    return JSONResponse({"ok": True})
+                await answer_callback(cb_id)
+                set_state(cid, "awaiting_credit_message")
+                await send_message(cid, "✍️ Send the new developer and credits message:", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                return JSONResponse({"ok": True})
             if cb_data == "set_system":
                 await answer_callback(cb_id)
                 current = get_user_system(cid)
@@ -395,7 +426,7 @@ async def webhook(request: Request):
             if cb_data.startswith("reply_admin:"):
                 await answer_callback(cb_id)
                 set_reply_state(cid, ADMINS[0])
-                await send_message(cid, "✍️ Type your reply to admin:", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, "✍️ Write your message or record your voice for admin.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
             if cb_data.startswith("reply_user:"):
@@ -403,7 +434,7 @@ async def webhook(request: Request):
                 await answer_callback(cb_id)
                 set_reply_state(cid, target)
                 target_name = get_username(target)
-                await send_message(cid, f"✍️ Message <b>{escape_html(target_name)}</b> (<code>{target}</code>). Send text or voice:", parse_mode="HTML", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, f"✍️ Message <b>{escape_html(target_name)}</b> (<code>{target}</code>). Write your message or record your voice:", parse_mode="HTML", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
             if cb_data.startswith("regen_img:"):
@@ -525,6 +556,14 @@ async def webhook(request: Request):
                     if not is_admin(cid):
                         return JSONResponse({"ok": True})
                     await run_broadcast(cid, text=text)
+                    return JSONResponse({"ok": True})
+
+                if st == "awaiting_credit_message":
+                    clear_state(cid)
+                    if not is_admin(cid):
+                        return JSONResponse({"ok": True})
+                    set_credit_message(text)
+                    await send_message(cid, "✅ Developer and credits message updated.", reply_markup=ikb([[btn("🔙 Back", "back_settings")]]))
                     return JSONResponse({"ok": True})
 
                 if st.startswith("awaiting_file_prompt:"):
@@ -805,7 +844,7 @@ async def webhook(request: Request):
             feedback_text = text.replace("/feedback", "", 1).strip()
             if not feedback_text:
                 set_reply_state(cid, -1)
-                await send_message(cid, "💬 Type your feedback:", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, "💬 Write your feedback or record your voice.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
             await send_feedback_to_admins(cid, name, feedback_text)
             await send_message(cid, "✅ Feedback sent!")
@@ -819,34 +858,43 @@ async def webhook(request: Request):
 
         if text == "/help":
             ensure_user(cid, name)
-            help_text = (
-                "📖 <b>Mero AI Help</b>\n\n"
-                "<b>Core Commands</b>\n"
-                "/start — Restart and reset your session\n"
-                "/settings — Open settings\n"
-                "/clear — Clear chat history\n"
-                "/cls — Clear stored attachment\n"
-                "/history — View recent chat history\n"
-                "/feedback — Send feedback (text or voice)\n"
-                "/clear_system — Remove custom system instructions\n"
-                "/help — Show this help\n\n"
-                "<b>Admin Commands</b>\n"
-                "/total — View all users\n"
-                "/sendMessage &lt;id&gt; - &lt;text&gt; — Message a user\n"
-                "/broadcast &lt;text&gt; — Broadcast text\n"
-                "/ban &lt;id&gt; — Ban user\n"
-                "/unban &lt;id&gt; — Unban user\n\n"
-                "<b>Supported Inputs</b>\n"
-                "• Text prompts and coding requests\n"
-                "• Documents and code files (HTML, Markdown, PDF, DOCX, XLSX, TXT, etc.)\n"
-                "• Audio and voice files\n"
-                "• Videos and animations\n"
-                "• Images and stickers\n\n"
-                "<b>New Features</b>\n"
-                "• AI model setting: Mero Lite (default) or Mero Pro\n"
-                "• Voice feedback, voice replies, and voice broadcasts\n"
-                "• Admin quick message buttons in total users list\n"
-            )
+            if is_admin(cid):
+                help_text = (
+                    "📖 <b>Mero AI Admin Help</b>\n\n"
+                    "<b>Admin Commands</b>\n"
+                    "/total — View all users\n"
+                    "/sendMessage &lt;id&gt; - &lt;text&gt; — Message a user\n"
+                    "/broadcast &lt;text&gt; — Broadcast text\n"
+                    "/ban &lt;id&gt; — Ban user\n"
+                    "/unban &lt;id&gt; — Unban user\n\n"
+                    "<b>General Commands</b>\n"
+                    "/start — Restart and reset your session\n"
+                    "/settings — Open admin settings\n"
+                    "/clear — Clear chat history\n"
+                    "/cls — Clear stored attachment\n"
+                    "/history — View recent chat history\n"
+                    "/clear_system — Remove custom system instructions\n"
+                    "/help — Show admin help\n"
+                )
+            else:
+                help_text = (
+                    "📖 <b>Mero AI User Help</b>\n\n"
+                    "<b>User Commands</b>\n"
+                    "/start — Restart and reset your session\n"
+                    "/settings — Open settings\n"
+                    "/clear — Clear chat history\n"
+                    "/cls — Clear stored attachment\n"
+                    "/history — View recent chat history\n"
+                    "/feedback — Send feedback (text or voice)\n"
+                    "/clear_system — Remove custom system instructions\n"
+                    "/help — Show this help\n\n"
+                    "<b>Supported Inputs</b>\n"
+                    "• Text prompts and coding requests\n"
+                    "• Documents and code files (HTML, Markdown, PDF, DOCX, XLSX, TXT, etc.)\n"
+                    "• Audio and voice files\n"
+                    "• Videos and animations\n"
+                    "• Images and stickers\n"
+                )
             await send_message(cid, help_text, parse_mode="HTML")
             return JSONResponse({"ok": True})
 

@@ -9,19 +9,22 @@ from message import send_message
 
 
 async def try_api_call(body_json: str, model: str) -> tuple[Optional[str], Optional[str]]:
-    keys = get_keys()
+    keys = [key for key in get_keys() if key]
     if not keys:
         return None, "No API keys available"
-    for i in range(len(keys)):
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={keys[i]}"
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+    failures: list[str] = []
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for idx, key in enumerate(keys, start=1):
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            try:
                 resp = await client.post(url, content=body_json, headers={"Content-Type": "application/json"})
-                if resp.status_code == 200:
-                    return resp.text, None
-        except Exception:
-            continue
-    return None, "All API keys exhausted"
+            except Exception as exc:
+                failures.append(f"key#{idx}: request_error:{exc.__class__.__name__}")
+                continue
+            if resp.status_code == 200:
+                return resp.text, None
+            failures.append(f"key#{idx}: status_{resp.status_code}")
+    return None, "; ".join(failures) if failures else "All API keys exhausted"
 
 
 def build_body(history_messages: list[dict], current_parts: list, system_text: str, use_tools: bool = True) -> dict:
