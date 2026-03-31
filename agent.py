@@ -50,7 +50,7 @@ async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
 async def agent_route(cid: int, user_text: str, name: str) -> None:
     agent_system = "You are a function router. Only output a single python function call. No explanation."
     prompt = AGENT_PROMPT.format(user_prompt=user_text)
-    agent_response = await call_gemini_raw([{"text": prompt}], agent_system)
+    agent_response = await call_gemini_raw([{"text": prompt}], agent_system, cid=cid)
     if not agent_response:
         await execute_normal_message(cid, user_text, name)
         return
