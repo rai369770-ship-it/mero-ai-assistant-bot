@@ -33,9 +33,10 @@ def template_prompts_keyboard() -> dict:
 def user_settings_keyboard() -> dict:
     return ikb([
         [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Voice", "set_voice")],
+        [btn("🤖 AI Model", "set_model"), btn("🌡️ Temperature", "set_temp")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("💬 Feedback", "feedback_prompt"), btn("📜 History", "history")],
-        [btn("🌡️ Temperature", "set_temp"), btn("🔄 Export Chat", "export_chat")],
+        [btn("🔄 Export Chat", "export_chat")],
         [btn("❌ Close", "close_settings")],
     ])
 
@@ -43,11 +44,12 @@ def user_settings_keyboard() -> dict:
 def admin_settings_keyboard() -> dict:
     return ikb([
         [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Voice", "set_voice")],
+        [btn("🤖 AI Model", "set_model"), btn("🌡️ Temperature", "set_temp")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("📊 Total Users", "admin_total"), btn("🚫 Banned Users", "admin_banned")],
         [btn("📢 Broadcast", "admin_broadcast"), btn("💬 Feedback", "feedback_prompt")],
         [btn("📜 History", "history"), btn("🔄 Export Chat", "export_chat")],
-        [btn("🌡️ Temperature", "set_temp"), btn("❌ Close", "close_settings")],
+        [btn("❌ Close", "close_settings")],
     ])
 
 
@@ -61,6 +63,13 @@ def voice_keyboard() -> dict:
         [btn("😊 Emotional Female", "voice:en_female_emotional"), btn("🎵 Singing Female", "voice:en_female_ht_f08_wonderful_world")],
         [btn("👻 Ghostface", "voice:en_us_ghostface"), btn("🚀 Rocket", "voice:en_us_rocket")],
         [btn("🤖 C3PO", "voice:en_us_c3po"), btn("🧙 Wizard", "voice:en_male_wizard")],
+        [btn("🔙 Back", "back_settings")],
+    ])
+
+
+def model_keyboard() -> dict:
+    return ikb([
+        [btn("⚡ Mero Lite", "model:lite"), btn("🚀 Mero Pro", "model:pro")],
         [btn("🔙 Back", "back_settings")],
     ])
 
@@ -88,11 +97,11 @@ def file_prompt_keyboard() -> dict:
 
 
 def admin_reply_keyboard(uid: int) -> dict:
-    return ikb([[btn("↩️ Reply", f"reply_admin:{uid}")]])
+    return ikb([[btn("↩️ Reply Admin", f"reply_admin:{uid}")]])
 
 
-def admin_user_reply_keyboard(target: int) -> dict:
-    return ikb([[btn(f"↩️ Reply to {target}", f"reply_user:{target}")]])
+def admin_user_reply_keyboard(target: int, username: str = "User") -> dict:
+    return ikb([[btn(f"↩️ Message {username}", f"reply_user:{target}")]])
 
 
 def broadcast_reply_keyboard() -> dict:

@@ -5,62 +5,109 @@ def escape_html(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
 
 
-def _inline_format(text: str) -> str:
+def _format_inline(text: str) -> str:
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^\s)]+)\)", r'<a href="\2">\1</a>', text)
     text = re.sub(r"`([^`\n]+)`", r"<code>\1</code>", text)
     text = re.sub(r"\*\*\*(.+?)\*\*\*", r"<b><i>\1</i></b>", text)
     text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"<i>\1</i>", text)
     text = re.sub(r"__(.+?)__", r"<u>\1</u>", text)
     text = re.sub(r"~~(.+?)~~", r"<s>\1</s>", text)
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", r'<a href="\2">\1</a>', text)
     return text
 
 
-def markdown_to_html(text: str) -> str:
-    code_block_pattern = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
-    parts = []
-    last_end = 0
+def _render_text_block(block: str) -> str:
+    lines = block.split("\n")
+    out = []
+    in_ul = False
+    in_ol = False
+    for raw in lines:
+        line = raw.rstrip()
+        if not line:
+            if in_ul:
+                out.append("</ul>")
+                in_ul = False
+            if in_ol:
+                out.append("</ol>")
+                in_ol = False
+            out.append("")
+            continue
+        heading = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if heading:
+            if in_ul:
+                out.append("</ul>")
+                in_ul = False
+            if in_ol:
+                out.append("</ol>")
+                in_ol = False
+            content = _format_inline(escape_html(heading.group(2).strip()))
+            out.append(f"<b>{content}</b>")
+            continue
+        unordered = re.match(r"^\s*[-*]\s+(.*)$", line)
+        if unordered:
+            if in_ol:
+                out.append("</ol>")
+                in_ol = False
+            if not in_ul:
+                out.append("<ul>")
+                in_ul = True
+            content = _format_inline(escape_html(unordered.group(1).strip()))
+            out.append(f"<li>{content}</li>")
+            continue
+        ordered = re.match(r"^\s*\d+[.)]\s+(.*)$", line)
+        if ordered:
+            if in_ul:
+                out.append("</ul>")
+                in_ul = False
+            if not in_ol:
+                out.append("<ol>")
+                in_ol = True
+            content = _format_inline(escape_html(ordered.group(1).strip()))
+            out.append(f"<li>{content}</li>")
+            continue
+        if in_ul:
+            out.append("</ul>")
+            in_ul = False
+        if in_ol:
+            out.append("</ol>")
+            in_ol = False
+        quote = re.match(r"^>\s?(.*)$", line)
+        if quote:
+            content = _format_inline(escape_html(quote.group(1)))
+            out.append(f"<blockquote>{content}</blockquote>")
+            continue
+        out.append(_format_inline(escape_html(line)))
+    if in_ul:
+        out.append("</ul>")
+    if in_ol:
+        out.append("</ol>")
+    return "\n".join(out)
 
-    for match in code_block_pattern.finditer(text):
-        before = text[last_end:match.start()]
+
+def markdown_to_html(text: str) -> str:
+    pattern = re.compile(r"```([\w+-]*)\n(.*?)```", re.DOTALL)
+    parts = []
+    last = 0
+    for match in pattern.finditer(text):
+        before = text[last:match.start()]
         if before:
             parts.append(("text", before))
-        lang = match.group(1)
-        code = match.group(2)
-        parts.append(("code", lang, code))
-        last_end = match.end()
-
-    remaining = text[last_end:]
-    if remaining:
-        parts.append(("text", remaining))
-
-    result_parts = []
+        parts.append(("code", match.group(1).strip(), match.group(2).rstrip("\n")))
+        last = match.end()
+    tail = text[last:]
+    if tail:
+        parts.append(("text", tail))
+    if not parts:
+        return _render_text_block(text)
+    rendered = []
     for part in parts:
         if part[0] == "code":
-            lang = part[1]
-            code_content = part[2].rstrip("\n")
-            escaped_code = escape_html(code_content)
+            lang = escape_html(part[1])
+            code = escape_html(part[2])
             if lang:
-                result_parts.append(f"<pre><code class=\"language-{escape_html(lang)}\">{escaped_code}</code></pre>")
+                rendered.append(f"<pre><code class=\"language-{lang}\">{code}</code></pre>")
             else:
-                result_parts.append(f"<pre>{escaped_code}</pre>")
+                rendered.append(f"<pre>{code}</pre>")
         else:
-            raw_text = part[1]
-            lines = raw_text.split("\n")
-            processed_lines = []
-            for line in lines:
-                heading_match = re.match(r"^(#{1,6})\s+(.*)", line)
-                if heading_match:
-                    content = heading_match.group(2)
-                    escaped = escape_html(content)
-                    formatted = _inline_format(escaped)
-                    processed_lines.append(f"\n<b>{formatted}</b>")
-                    continue
-
-                escaped_line = escape_html(line)
-                formatted_line = _inline_format(escaped_line)
-                processed_lines.append(formatted_line)
-
-            result_parts.append("\n".join(processed_lines))
-
-    return "".join(result_parts)
+            rendered.append(_render_text_block(part[1]))
+    return "".join(rendered)

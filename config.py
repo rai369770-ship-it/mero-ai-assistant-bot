@@ -3,7 +3,7 @@ import os
 BOT_TOKEN = "8655216165:AAEoDExRbxAmZVxGL9H0na4hziBEv6I-0RA"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POOL_API = "https://sr-pool-api-5bm.pages.dev"
-MODEL = "gemini-2.5-flash"
+MODEL = "gemini-2.5-flash-lite"
 ADMINS = [7026190306, 6280547580]
 TTS_API = "https://tik-tok-tts-s-m-ripon.vercel.app"
 DEFAULT_VOICE = "en_us_001"
