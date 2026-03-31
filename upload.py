@@ -57,19 +57,23 @@ async def upload_to_gemini_files(file_bytes: bytes, mime_type: str, display_name
                             continue
                         check_data = check_resp.json()
                         check_file = check_data.get("file", check_data)
-                        if check_file.get("state") == "ACTIVE":
+                        if check_file.get("state") == "ACTIVE" and check_file.get("uri"):
                             return {
                                 "uri": check_file.get("uri", file_uri),
                                 "mime_type": check_file.get("mimeType", mime_type),
                                 "name": file_name,
                                 "display_name": display_name,
+                                "api_key": key,
                             }
+                    continue
+                if not file_uri:
                     continue
                 return {
                     "uri": file_uri,
                     "mime_type": file_info.get("mimeType", mime_type),
                     "name": file_name,
                     "display_name": display_name,
+                    "api_key": key,
                 }
             except Exception:
                 continue

@@ -8,8 +8,35 @@ from markdown_parse import markdown_to_html, escape_html
 from message import send_message
 
 
-async def try_api_call(body_json: str, model: str) -> tuple[Optional[str], Optional[str]]:
+def _ordered_keys(preferred_key: Optional[str] = None) -> list[str]:
     keys = [key for key in get_keys() if key]
+    if preferred_key and preferred_key in keys:
+        return [preferred_key] + [k for k in keys if k != preferred_key]
+    return keys
+
+
+def _normalize_part_keys(part: dict) -> dict:
+    if "fileData" in part and isinstance(part["fileData"], dict):
+        fd = part["fileData"]
+        return {"file_data": {"mime_type": fd.get("mimeType", ""), "file_uri": fd.get("fileUri", "")}}
+    if "inlineData" in part and isinstance(part["inlineData"], dict):
+        ind = part["inlineData"]
+        return {"inline_data": {"mime_type": ind.get("mimeType", ""), "data": ind.get("data", "")}}
+    return part
+
+
+def _normalize_parts(parts: list) -> list:
+    normalized: list = []
+    for part in parts:
+        if isinstance(part, dict):
+            normalized.append(_normalize_part_keys(part))
+        else:
+            normalized.append(part)
+    return normalized
+
+
+async def try_api_call(body_json: str, model: str, preferred_key: Optional[str] = None) -> tuple[Optional[str], Optional[str]]:
+    keys = _ordered_keys(preferred_key)
     if not keys:
         return None, "No API keys available"
     failures: list[str] = []
@@ -34,7 +61,7 @@ def build_body(history_messages: list[dict], current_parts: list, system_text: s
             "role": "user" if msg["role"] == "user" else "model",
             "parts": [{"text": msg.get("text", "")}]
         })
-    contents.append({"role": "user", "parts": current_parts})
+    contents.append({"role": "user", "parts": _normalize_parts(current_parts)})
     body: dict = {
         "system_instruction": {"parts": [{"text": system_text}]},
         "contents": contents,
@@ -81,22 +108,22 @@ def format_response_with_sources(ai_text: str, sources: list[dict]) -> str:
     return html
 
 
-async def call_gemini_raw(parts: list, system_text: str, model: str = "gemini-2.5-flash-lite") -> Optional[str]:
+async def call_gemini_raw(parts: list, system_text: str, model: str = "gemini-2.5-flash-lite", preferred_key: Optional[str] = None) -> Optional[str]:
     if not await fetch_api_keys():
         return None
     body = {
         "system_instruction": {"parts": [{"text": system_text}]},
-        "contents": [{"role": "user", "parts": parts}],
+        "contents": [{"role": "user", "parts": _normalize_parts(parts)}],
         "generationConfig": {"maxOutputTokens": 8192},
     }
-    content, _ = await try_api_call(json.dumps(body), model)
+    content, _ = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
     if not content:
         return None
     text, _ = extract_ai_text(content)
     return text
 
 
-async def handle_gemini(cid: int, current_parts: list, system_text: str, use_tools: bool = True) -> Optional[str]:
+async def handle_gemini(cid: int, current_parts: list, system_text: str, use_tools: bool = True, preferred_key: Optional[str] = None) -> Optional[str]:
     history = get_recent_history(cid, CONTEXT_SIZE)
     body = build_body(history, current_parts, system_text, use_tools)
     if not await fetch_api_keys():
@@ -105,7 +132,7 @@ async def handle_gemini(cid: int, current_parts: list, system_text: str, use_too
         await send_message(cid, msg)
         return None
     model = get_user_model(cid)
-    content, err = await try_api_call(json.dumps(body), model)
+    content, err = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
     if content:
         ai_text, sources = extract_ai_text(content)
         save_message(cid, "model", ai_text)

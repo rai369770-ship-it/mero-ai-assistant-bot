@@ -228,7 +228,13 @@ async def webhook(request: Request):
                     parts.append({"fileData": {"mimeType": fd["mime_type"], "fileUri": fd["uri"]}})
                 elif fd.get("base64"):
                     parts.append({"inlineData": {"mimeType": fd["mime_type"], "data": fd["base64"]}})
-                await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
+                await handle_gemini(
+                    cid,
+                    parts,
+                    get_system_text(name, cid),
+                    use_tools=False,
+                    preferred_key=fd.get("api_key", ""),
+                )
                 return JSONResponse({"ok": True})
 
             if cb_data == "cancel_attachment":
@@ -581,7 +587,13 @@ async def webhook(request: Request):
                         parts.append({"fileData": {"mimeType": fd["mime_type"], "fileUri": fd["uri"]}})
                     elif fd.get("base64"):
                         parts.append({"inlineData": {"mimeType": fd["mime_type"], "data": fd["base64"]}})
-                    await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
+                    await handle_gemini(
+                        cid,
+                        parts,
+                        get_system_text(name, cid),
+                        use_tools=False,
+                        preferred_key=fd.get("api_key", ""),
+                    )
                     return JSONResponse({"ok": True})
 
         reply_target = get_reply_state(cid)
