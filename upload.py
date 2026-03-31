@@ -9,70 +9,71 @@ from config import GEMINI_FILES_API, GEMINI_FILES_GET, SUPPORTED_MIME_TYPES, COD
 async def upload_to_gemini_files(file_bytes: bytes, mime_type: str, display_name: str) -> Optional[dict]:
     if not await fetch_api_keys():
         return None
-    keys = get_keys()
+    keys = [key for key in get_keys() if key]
     if not keys:
         return None
-    key = keys[0]
-    upload_url = f"{GEMINI_FILES_API}?key={key}"
-    metadata = {"file": {"displayName": display_name}}
-    try:
-        async with httpx.AsyncClient(timeout=180.0) as client:
-            start_resp = await client.post(
-                upload_url,
-                json=metadata,
-                headers={
-                    "X-Goog-Upload-Protocol": "resumable",
-                    "X-Goog-Upload-Command": "start",
-                    "X-Goog-Upload-Header-Content-Length": str(len(file_bytes)),
-                    "X-Goog-Upload-Header-Content-Type": mime_type,
-                    "Content-Type": "application/json",
-                },
-            )
-            if start_resp.status_code not in (200, 201):
-                return None
-            resumable_url = start_resp.headers.get("X-Goog-Upload-URL")
-            if not resumable_url:
-                return None
-            upload_resp = await client.post(
-                resumable_url,
-                content=file_bytes,
-                headers={
-                    "Content-Length": str(len(file_bytes)),
-                    "X-Goog-Upload-Offset": "0",
-                    "X-Goog-Upload-Command": "upload, finalize",
-                },
-            )
-            if upload_resp.status_code not in (200, 201):
-                return None
-            result = upload_resp.json()
-            file_info = result.get("file", result)
-            file_uri = file_info.get("uri", "")
-            file_name = file_info.get("name", "")
-            state = file_info.get("state", "")
-            if state == "PROCESSING" and file_name:
-                for _ in range(36):
-                    await asyncio.sleep(2)
-                    check_resp = await client.get(f"{GEMINI_FILES_GET}/{file_name}?key={key}")
-                    if check_resp.status_code != 200:
-                        continue
-                    check_data = check_resp.json()
-                    check_file = check_data.get("file", check_data)
-                    if check_file.get("state") == "ACTIVE":
-                        return {
-                            "uri": check_file.get("uri", file_uri),
-                            "mime_type": check_file.get("mimeType", mime_type),
-                            "name": file_name,
-                            "display_name": display_name,
-                        }
-                return None
-            return {
-                "uri": file_uri,
-                "mime_type": file_info.get("mimeType", mime_type),
-                "name": file_name,
-                "display_name": display_name,
-            }
-    except Exception:
-        return None
+    async with httpx.AsyncClient(timeout=180.0) as client:
+        for key in keys:
+            upload_url = f"{GEMINI_FILES_API}?key={key}"
+            metadata = {"file": {"displayName": display_name}}
+            try:
+                start_resp = await client.post(
+                    upload_url,
+                    json=metadata,
+                    headers={
+                        "X-Goog-Upload-Protocol": "resumable",
+                        "X-Goog-Upload-Command": "start",
+                        "X-Goog-Upload-Header-Content-Length": str(len(file_bytes)),
+                        "X-Goog-Upload-Header-Content-Type": mime_type,
+                        "Content-Type": "application/json",
+                    },
+                )
+                if start_resp.status_code not in (200, 201):
+                    continue
+                resumable_url = start_resp.headers.get("X-Goog-Upload-URL")
+                if not resumable_url:
+                    continue
+                upload_resp = await client.post(
+                    resumable_url,
+                    content=file_bytes,
+                    headers={
+                        "Content-Length": str(len(file_bytes)),
+                        "X-Goog-Upload-Offset": "0",
+                        "X-Goog-Upload-Command": "upload, finalize",
+                    },
+                )
+                if upload_resp.status_code not in (200, 201):
+                    continue
+                result = upload_resp.json()
+                file_info = result.get("file", result)
+                file_uri = file_info.get("uri", "")
+                file_name = file_info.get("name", "")
+                state = file_info.get("state", "")
+                if state == "PROCESSING" and file_name:
+                    for _ in range(36):
+                        await asyncio.sleep(2)
+                        check_resp = await client.get(f"{GEMINI_FILES_GET}/{file_name}?key={key}")
+                        if check_resp.status_code != 200:
+                            continue
+                        check_data = check_resp.json()
+                        check_file = check_data.get("file", check_data)
+                        if check_file.get("state") == "ACTIVE":
+                            return {
+                                "uri": check_file.get("uri", file_uri),
+                                "mime_type": check_file.get("mimeType", mime_type),
+                                "name": file_name,
+                                "display_name": display_name,
+                            }
+                    continue
+                return {
+                    "uri": file_uri,
+                    "mime_type": file_info.get("mimeType", mime_type),
+                    "name": file_name,
+                    "display_name": display_name,
+                }
+            except Exception:
+                continue
+    return None
 
 
 def detect_mime_type(file_path: str, provided_mime: Optional[str] = None) -> str:

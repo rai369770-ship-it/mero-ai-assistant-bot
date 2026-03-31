@@ -37,6 +37,7 @@ def user_settings_keyboard() -> dict:
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("💬 Feedback", "feedback_prompt"), btn("📜 History", "history")],
         [btn("🔄 Export Chat", "export_chat")],
+        [btn("🛠 Developer & Credits", "developer_credits")],
         [btn("❌ Close", "close_settings")],
     ])
 
@@ -47,8 +48,9 @@ def admin_settings_keyboard() -> dict:
         [btn("🤖 AI Model", "set_model"), btn("🌡️ Temperature", "set_temp")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("📊 Total Users", "admin_total"), btn("🚫 Banned Users", "admin_banned")],
-        [btn("📢 Broadcast", "admin_broadcast"), btn("💬 Feedback", "feedback_prompt")],
+        [btn("📢 Broadcast", "admin_broadcast")],
         [btn("📜 History", "history"), btn("🔄 Export Chat", "export_chat")],
+        [btn("🛠 Developer & Credits", "developer_credits")],
         [btn("❌ Close", "close_settings")],
     ])
 
