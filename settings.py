@@ -33,21 +33,31 @@ def template_prompts_keyboard() -> dict:
 def user_settings_keyboard() -> dict:
     return ikb([
         [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Voice", "set_voice")],
+        [btn("🧩 AI Model", "set_model"), btn("🌡️ Temperature", "set_temp")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("💬 Feedback", "feedback_prompt"), btn("📜 History", "history")],
-        [btn("🌡️ Temperature", "set_temp"), btn("🔄 Export Chat", "export_chat")],
-        [btn("❌ Close", "close_settings")],
+        [btn("🔄 Export Chat", "export_chat"), btn("❌ Close", "close_settings")],
     ])
 
 
 def admin_settings_keyboard() -> dict:
     return ikb([
         [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Voice", "set_voice")],
+        [btn("🧩 AI Model", "set_model"), btn("🌡️ Temperature", "set_temp")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("📊 Total Users", "admin_total"), btn("🚫 Banned Users", "admin_banned")],
         [btn("📢 Broadcast", "admin_broadcast"), btn("💬 Feedback", "feedback_prompt")],
         [btn("📜 History", "history"), btn("🔄 Export Chat", "export_chat")],
-        [btn("🌡️ Temperature", "set_temp"), btn("❌ Close", "close_settings")],
+        [btn("❌ Close", "close_settings")],
+    ])
+
+
+def model_keyboard(current_model: str) -> dict:
+    lite_mark = "✅ " if current_model == "gemini-2.5-flash-lite" else ""
+    pro_mark = "✅ " if current_model == "gemini-2.5-flash" else ""
+    return ikb([
+        [btn(f"{lite_mark}Mero lite", "model:lite"), btn(f"{pro_mark}Mero pro", "model:pro")],
+        [btn("🔙 Back", "back_settings")],
     ])
 
 

@@ -32,7 +32,7 @@ def user_exists(uid: int) -> bool:
 
 def remove_all_user_data(uid: int) -> None:
     r.delete(hk(uid), rsk(uid), sk(uid), fk(uid))
-    r.delete(f"settings:{uid}:system", f"settings:{uid}:voice", f"settings:{uid}:temp")
+    r.delete(f"settings:{uid}:system", f"settings:{uid}:voice", f"settings:{uid}:temp", f"settings:{uid}:model")
     r.hdel("totalUsers", str(uid))
 
 
@@ -146,6 +146,14 @@ def get_user_temp(cid: int) -> float:
 def set_user_temp(cid: int, temp: float) -> None:
     r.set(f"settings:{cid}:temp", str(temp))
 
+
+
+def get_user_model(cid: int) -> str:
+    return r.get(f"settings:{cid}:model") or "gemini-2.5-flash-lite"
+
+
+def set_user_model(cid: int, model: str) -> None:
+    r.set(f"settings:{cid}:model", model)
 
 def ensure_user(cid: int, name: str) -> None:
     if not user_exists(cid):
