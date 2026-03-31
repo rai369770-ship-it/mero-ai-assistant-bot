@@ -10,7 +10,16 @@ from markdown_parse import escape_html
 
 async def _store_and_prompt(cid: int, file_name: str, mime: str, file_bytes: bytes, uploaded: dict | None, icon: str, label: str) -> None:
     if uploaded:
-        save_file_data(cid, {"uri": uploaded["uri"], "mime_type": uploaded["mime_type"], "name": uploaded["name"], "display_name": file_name})
+        save_file_data(
+            cid,
+            {
+                "uri": uploaded["uri"],
+                "mime_type": uploaded["mime_type"],
+                "name": uploaded["name"],
+                "display_name": file_name,
+                "api_key": uploaded.get("api_key", ""),
+            },
+        )
     else:
         encoded = base64.b64encode(file_bytes).decode("utf-8")
         save_file_data(cid, {"uri": "", "mime_type": mime, "name": "", "display_name": file_name, "base64": encoded})
@@ -32,7 +41,7 @@ async def _process_non_image(cid: int, name: str, file_name: str, mime: str, fil
             parts.append({"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}})
         else:
             parts.append({"inlineData": {"mimeType": mime, "data": base64.b64encode(file_bytes).decode("utf-8")}})
-        await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
+        await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False, preferred_key=uploaded.get("api_key", "") if uploaded else None)
         return
     await _store_and_prompt(cid, file_name, mime, file_bytes, uploaded, upload_label, tag)
 
@@ -65,11 +74,20 @@ async def handle_photo(cid: int, message: dict, name: str) -> None:
         else:
             await send_message(cid, f"✅ Image uploaded: <b>{escape_html(display)}</b>\n\nType your prompt or tap Describe.", parse_mode="HTML", reply_markup=photo_keyboard())
         return
-    save_file_data(cid, {"uri": uploaded["uri"], "mime_type": uploaded["mime_type"], "name": uploaded["name"], "display_name": display})
+    save_file_data(
+        cid,
+        {
+            "uri": uploaded["uri"],
+            "mime_type": uploaded["mime_type"],
+            "name": uploaded["name"],
+            "display_name": display,
+            "api_key": uploaded.get("api_key", ""),
+        },
+    )
     if caption:
         save_message(cid, "user", f"[Image: {display}] {caption}")
         parts2: list = [{"text": caption}, {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}}]
-        await handle_gemini(cid, parts2, get_system_text(name, cid), use_tools=False)
+        await handle_gemini(cid, parts2, get_system_text(name, cid), use_tools=False, preferred_key=uploaded.get("api_key", ""))
         return
     await send_message(cid, f"✅ Image uploaded: <b>{escape_html(display)}</b>\n\nType your prompt or tap Describe.", parse_mode="HTML", reply_markup=photo_keyboard())
 
@@ -167,7 +185,7 @@ async def handle_sticker(cid: int, message: dict, name: str) -> None:
     if uploaded:
         save_message(cid, "user", "[Sticker] Describe this sticker")
         parts: list = [{"text": "Describe this sticker and react to it naturally."}, {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}}]
-        await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
+        await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False, preferred_key=uploaded.get("api_key", ""))
         return
     encoded = base64.b64encode(file_bytes).decode("utf-8")
     save_file_data(cid, {"uri": "", "mime_type": "image/webp", "name": "", "display_name": "sticker.webp", "base64": encoded})

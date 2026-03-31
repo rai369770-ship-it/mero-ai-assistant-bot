@@ -34,7 +34,13 @@ async def execute_normal_message(cid: int, query: str, name: str) -> None:
         elif file_data.get("base64"):
             current_parts.append({"inlineData": {"mimeType": file_data["mime_type"], "data": file_data["base64"]}})
             has_file = True
-    await handle_gemini(cid, current_parts, get_system_text(name, cid), use_tools=not has_file)
+    await handle_gemini(
+        cid,
+        current_parts,
+        get_system_text(name, cid),
+        use_tools=not has_file,
+        preferred_key=file_data.get("api_key", "") if file_data else None,
+    )
 
 
 async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
