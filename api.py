@@ -77,7 +77,7 @@ def format_response_with_sources(ai_text: str, sources: list[dict]) -> str:
     html = markdown_to_html(ai_text)
     if sources:
         html += "\n\n📌 <b>Sources:</b>\n"
-        html += "".join(f'• <a href="{s["url"]}">{escape_html(s["title"])}</a>\n' for s in sources)
+        html += "".join(f'• <a href="{escape_html(s["url"])}">{escape_html(s["title"])}</a>\n' for s in sources)
     return html
 
 

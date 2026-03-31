@@ -19,68 +19,33 @@ def _format_inline(text: str) -> str:
 def _render_text_block(block: str) -> str:
     lines = block.split("\n")
     out = []
-    in_ul = False
-    in_ol = False
     for raw in lines:
         line = raw.rstrip()
         if not line:
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
-            if in_ol:
-                out.append("</ol>")
-                in_ol = False
             out.append("")
             continue
         heading = re.match(r"^(#{1,6})\s+(.*)$", line)
         if heading:
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
-            if in_ol:
-                out.append("</ol>")
-                in_ol = False
             content = _format_inline(escape_html(heading.group(2).strip()))
             out.append(f"<b>{content}</b>")
             continue
         unordered = re.match(r"^\s*[-*]\s+(.*)$", line)
         if unordered:
-            if in_ol:
-                out.append("</ol>")
-                in_ol = False
-            if not in_ul:
-                out.append("<ul>")
-                in_ul = True
             content = _format_inline(escape_html(unordered.group(1).strip()))
-            out.append(f"<li>{content}</li>")
+            out.append(f"• {content}")
             continue
         ordered = re.match(r"^\s*\d+[.)]\s+(.*)$", line)
         if ordered:
-            if in_ul:
-                out.append("</ul>")
-                in_ul = False
-            if not in_ol:
-                out.append("<ol>")
-                in_ol = True
             content = _format_inline(escape_html(ordered.group(1).strip()))
-            out.append(f"<li>{content}</li>")
+            idx = line.split(".", 1)[0].split(")", 1)[0].strip()
+            out.append(f"{idx}. {content}")
             continue
-        if in_ul:
-            out.append("</ul>")
-            in_ul = False
-        if in_ol:
-            out.append("</ol>")
-            in_ol = False
         quote = re.match(r"^>\s?(.*)$", line)
         if quote:
             content = _format_inline(escape_html(quote.group(1)))
-            out.append(f"<blockquote>{content}</blockquote>")
+            out.append(f"│ {content}")
             continue
         out.append(_format_inline(escape_html(line)))
-    if in_ul:
-        out.append("</ul>")
-    if in_ol:
-        out.append("</ol>")
     return "\n".join(out)
 
 
