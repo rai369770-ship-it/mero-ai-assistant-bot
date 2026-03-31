@@ -14,48 +14,65 @@ async def upload_to_gemini_files(file_bytes: bytes, mime_type: str, display_name
         return None
     key = keys[0]
     upload_url = f"{GEMINI_FILES_API}?key={key}"
-    metadata = json.dumps({"file": {"displayName": display_name}})
-    boundary = "----GeminiBoundary7MA4YWxkTrZu0gW"
-    body = (
-        f"--{boundary}\r\n"
-        f"Content-Type: application/json; charset=UTF-8\r\n\r\n"
-        f"{metadata}\r\n"
-        f"--{boundary}\r\n"
-        f"Content-Type: {mime_type}\r\n\r\n"
-    ).encode("utf-8") + file_bytes + f"\r\n--{boundary}--\r\n".encode("utf-8")
-    headers = {"Content-Type": f"multipart/related; boundary={boundary}"}
+    metadata = {"file": {"displayName": display_name}}
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(upload_url, content=body, headers=headers)
-            if resp.status_code == 200:
-                result = resp.json()
-                file_info = result.get("file", {})
-                file_uri = file_info.get("uri", "")
-                file_name = file_info.get("name", "")
-                state = file_info.get("state", "")
-                if state == "PROCESSING":
-                    for _ in range(30):
-                        await asyncio.sleep(2)
-                        check_resp = await client.get(f"{GEMINI_FILES_GET}/{file_name}?key={key}")
-                        if check_resp.status_code == 200:
-                            check_data = check_resp.json()
-                            if check_data.get("state") == "ACTIVE":
-                                return {
-                                    "uri": check_data.get("uri", file_uri),
-                                    "mime_type": check_data.get("mimeType", mime_type),
-                                    "name": file_name,
-                                    "display_name": display_name,
-                                }
-                    return None
-                return {
-                    "uri": file_uri,
-                    "mime_type": mime_type,
-                    "name": file_name,
-                    "display_name": display_name,
-                }
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            start_resp = await client.post(
+                upload_url,
+                json=metadata,
+                headers={
+                    "X-Goog-Upload-Protocol": "resumable",
+                    "X-Goog-Upload-Command": "start",
+                    "X-Goog-Upload-Header-Content-Length": str(len(file_bytes)),
+                    "X-Goog-Upload-Header-Content-Type": mime_type,
+                    "Content-Type": "application/json",
+                },
+            )
+            if start_resp.status_code not in (200, 201):
+                return None
+            resumable_url = start_resp.headers.get("X-Goog-Upload-URL")
+            if not resumable_url:
+                return None
+            upload_resp = await client.post(
+                resumable_url,
+                content=file_bytes,
+                headers={
+                    "Content-Length": str(len(file_bytes)),
+                    "X-Goog-Upload-Offset": "0",
+                    "X-Goog-Upload-Command": "upload, finalize",
+                },
+            )
+            if upload_resp.status_code not in (200, 201):
+                return None
+            result = upload_resp.json()
+            file_info = result.get("file", result)
+            file_uri = file_info.get("uri", "")
+            file_name = file_info.get("name", "")
+            state = file_info.get("state", "")
+            if state == "PROCESSING" and file_name:
+                for _ in range(36):
+                    await asyncio.sleep(2)
+                    check_resp = await client.get(f"{GEMINI_FILES_GET}/{file_name}?key={key}")
+                    if check_resp.status_code != 200:
+                        continue
+                    check_data = check_resp.json()
+                    check_file = check_data.get("file", check_data)
+                    if check_file.get("state") == "ACTIVE":
+                        return {
+                            "uri": check_file.get("uri", file_uri),
+                            "mime_type": check_file.get("mimeType", mime_type),
+                            "name": file_name,
+                            "display_name": display_name,
+                        }
+                return None
+            return {
+                "uri": file_uri,
+                "mime_type": file_info.get("mimeType", mime_type),
+                "name": file_name,
+                "display_name": display_name,
+            }
     except Exception:
-        pass
-    return None
+        return None
 
 
 def detect_mime_type(file_path: str, provided_mime: Optional[str] = None) -> str:
@@ -74,7 +91,7 @@ def detect_mime_type(file_path: str, provided_mime: Optional[str] = None) -> str
         "csv": "text/csv",
         "html": "text/html",
         "css": "text/css",
-        "js": "application/javascript",
+        "js": "text/javascript",
         "json": "application/json",
         "xml": "application/xml",
         "py": "text/x-python",
@@ -91,13 +108,13 @@ def detect_mime_type(file_path: str, provided_mime: Optional[str] = None) -> str
         "scala": "text/x-scala",
         "sh": "text/x-shellscript",
         "sql": "text/x-sql",
-        "yaml": "application/x-yaml",
-        "yml": "application/x-yaml",
+        "yaml": "text/x-yaml",
+        "yml": "text/x-yaml",
         "toml": "text/x-toml",
         "md": "text/markdown",
-        "ts": "application/typescript",
-        "tsx": "application/typescript",
-        "jsx": "application/javascript",
+        "ts": "text/x-typescript",
+        "tsx": "text/x-typescript",
+        "jsx": "text/javascript",
         "lua": "text/x-lua",
         "pl": "text/x-perl",
         "r": "text/x-r",

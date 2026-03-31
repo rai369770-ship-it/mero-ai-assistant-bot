@@ -11,6 +11,7 @@ from database import (
     save_file_data, get_file_data, clear_file_data,
     get_user_voice, set_user_voice, get_user_system, set_user_system,
     clear_user_system, get_user_temp, set_user_temp,
+    get_user_model, set_user_model,
     ensure_user, is_admin, check_banned,
 )
 from message import (
@@ -23,7 +24,7 @@ from settings import (
     btn, url_btn, ikb,
     start_keyboard, template_prompts_keyboard,
     user_settings_keyboard, admin_settings_keyboard,
-    voice_keyboard, temp_keyboard, photo_keyboard, file_prompt_keyboard,
+    voice_keyboard, model_keyboard, temp_keyboard, photo_keyboard, file_prompt_keyboard,
     admin_reply_keyboard, admin_user_reply_keyboard, broadcast_reply_keyboard,
     share_keyboard,
 )
@@ -55,6 +56,74 @@ async def send_banned_message(cid: int) -> None:
         "🚫 Sorry, you're banned by the admin. You can't use the bot anymore.\n\nYou can request the admin to unban you.",
         reply_markup=ikb([[btn("📩 Request Unban", "request_unban")]]),
     )
+
+
+def model_label(model_key: str) -> str:
+    return "Mero Pro" if model_key == "gemini-2.5-flash" else "Mero Lite"
+
+
+def resolve_model(selection: str) -> str:
+    return "gemini-2.5-flash" if selection == "pro" else "gemini-2.5-flash-lite"
+
+
+def get_username(uid: int) -> str:
+    return get_all_users().get(str(uid), str(uid))
+
+
+async def send_feedback_to_admins(sender_id: int, sender_name: str, text: str) -> None:
+    safe_name = escape_html(sender_name)
+    msg = (
+        f"📬 <b>New Feedback</b>\n\n"
+        f"👤 <b>From:</b> {safe_name}\n"
+        f"🆔 <b>ID:</b> <code>{sender_id}</code>\n\n"
+        f"💬 {escape_html(text)}"
+    )
+    for admin_id in ADMINS:
+        await send_message(admin_id, msg, parse_mode="HTML", reply_markup=admin_user_reply_keyboard(sender_id, sender_name))
+
+
+async def relay_voice_reply(sender_id: int, sender_name: str, target_id: int, voice: dict, admin_origin: bool) -> bool:
+    voice_data = await download_telegram_file(voice["file_id"])
+    if not voice_data:
+        await send_message(sender_id, "❌ Failed to download voice message.")
+        return False
+    if admin_origin:
+        caption = f"🎙️ Voice from Admin"
+        result = await send_voice_bytes(target_id, voice_data, caption, "admin_voice.ogg", voice.get("mime_type", "audio/ogg"))
+        status = "✅ Sent" if result and result.get("ok") else "❌ Failed"
+        await send_message(sender_id, f"{status} voice to <code>{target_id}</code>.", parse_mode="HTML")
+        return bool(result and result.get("ok"))
+    caption = f"🎙️ Voice reply from {escape_html(sender_name)} (<code>{sender_id}</code>)"
+    for admin_id in ADMINS:
+        await send_voice_bytes(admin_id, voice_data, None, "user_voice.ogg", voice.get("mime_type", "audio/ogg"))
+        await send_message(admin_id, caption, parse_mode="HTML", reply_markup=admin_user_reply_keyboard(sender_id, sender_name))
+    await send_message(sender_id, "✅ Voice reply sent!")
+    return True
+
+
+async def run_broadcast(admin_id: int, text: str | None = None, voice_data: bytes | None = None, voice_mime: str = "audio/ogg") -> None:
+    users = get_all_users()
+    success, fail = 0, 0
+    for uid in users:
+        target = int(uid)
+        try:
+            if voice_data is not None:
+                result = await send_voice_bytes(target, voice_data, "📢 Voice broadcast", "broadcast.ogg", voice_mime)
+                await send_message(target, "📢 <b>Voice Broadcast</b>", parse_mode="HTML", reply_markup=broadcast_reply_keyboard())
+            else:
+                result = await send_message(
+                    target,
+                    f"📢 <b>Broadcast:</b>\n\n{escape_html(text or '')}",
+                    parse_mode="HTML",
+                    reply_markup=broadcast_reply_keyboard(),
+                )
+            if result and result.get("ok"):
+                success += 1
+            else:
+                fail += 1
+        except Exception:
+            fail += 1
+    await send_message(admin_id, f"📢 Broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}")
 
 
 @app.get("/")
@@ -286,6 +355,25 @@ async def webhook(request: Request):
                 await edit_message(cid, mid, f"✅ Voice changed to <code>{voice_id}</code>", parse_mode="HTML", reply_markup=ikb([[btn("🔙 Back", "back_settings")]]))
                 return JSONResponse({"ok": True})
 
+            if cb_data == "set_model":
+                await answer_callback(cb_id)
+                current_model = get_user_model(cid)
+                await edit_message(
+                    cid, mid,
+                    f"🤖 <b>AI Model</b>\n\nCurrent: <code>{escape_html(model_label(current_model))}</code>\n\nChoose model:",
+                    parse_mode="HTML",
+                    reply_markup=model_keyboard(),
+                )
+                return JSONResponse({"ok": True})
+
+            if cb_data.startswith("model:"):
+                selected = cb_data.split(":", 1)[1]
+                model_key = resolve_model(selected)
+                set_user_model(cid, model_key)
+                await answer_callback(cb_id, f"Model: {model_label(model_key)}")
+                await edit_message(cid, mid, f"✅ Model set to <code>{escape_html(model_label(model_key))}</code>", parse_mode="HTML", reply_markup=ikb([[btn("🔙 Back", "back_settings")]]))
+                return JSONResponse({"ok": True})
+
             if cb_data == "set_temp":
                 await answer_callback(cb_id)
                 current_temp = get_user_temp(cid)
@@ -314,7 +402,8 @@ async def webhook(request: Request):
                 target = int(cb_data.split(":")[1])
                 await answer_callback(cb_id)
                 set_reply_state(cid, target)
-                await send_message(cid, f"✍️ Type reply to <code>{target}</code>:", parse_mode="HTML", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                target_name = get_username(target)
+                await send_message(cid, f"✍️ Message <b>{escape_html(target_name)}</b> (<code>{target}</code>). Send text or voice:", parse_mode="HTML", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
             if cb_data.startswith("regen_img:"):
@@ -337,7 +426,7 @@ async def webhook(request: Request):
                 for uid_str, uname in users.items():
                     uid_int = int(uid_str)
                     if uid_int not in ADMINS:
-                        rows.append([btn(f"🚫 Ban {uname} ({uid_str})", f"ban_confirm:{uid_str}")])
+                        rows.append([btn(f"💬 Message {uname}", f"reply_user:{uid_str}"), btn(f"🚫 Ban", f"ban_confirm:{uid_str}")])
                 text = f"📊 <b>Total Users: {len(users)}</b>\n\n"
                 text += "".join(f"🆔 <code>{u}</code> — {escape_html(n)}\n" for u, n in users.items())
                 rows.append([btn("🔙 Back", "back_settings")])
@@ -397,7 +486,7 @@ async def webhook(request: Request):
                     return JSONResponse({"ok": True})
                 await answer_callback(cb_id)
                 set_state(cid, "awaiting_broadcast")
-                await send_message(cid, "📢 Type your broadcast message:", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, "📢 Send your broadcast as text or voice:", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
             return JSONResponse({"ok": True})
@@ -435,23 +524,7 @@ async def webhook(request: Request):
                     clear_state(cid)
                     if not is_admin(cid):
                         return JSONResponse({"ok": True})
-                    users = get_all_users()
-                    success, fail = 0, 0
-                    for uid in users:
-                        try:
-                            result = await send_message(
-                                int(uid),
-                                f"📢 <b>Broadcast:</b>\n\n{escape_html(text)}",
-                                parse_mode="HTML",
-                                reply_markup=broadcast_reply_keyboard(),
-                            )
-                            if result and result.get("ok"):
-                                success += 1
-                            else:
-                                fail += 1
-                        except Exception:
-                            fail += 1
-                    await send_message(cid, f"📢 Broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}")
+                    await run_broadcast(cid, text=text)
                     return JSONResponse({"ok": True})
 
                 if st.startswith("awaiting_file_prompt:"):
@@ -473,19 +546,27 @@ async def webhook(request: Request):
                     return JSONResponse({"ok": True})
 
         reply_target = get_reply_state(cid)
+        if reply_target is not None and message.get("voice"):
+            clear_reply_state(cid)
+            if reply_target == -1:
+                voice_data = await download_telegram_file(message["voice"]["file_id"])
+                if not voice_data:
+                    await send_message(cid, "❌ Failed to send voice feedback.")
+                    return JSONResponse({"ok": True})
+                for admin_id in ADMINS:
+                    await send_voice_bytes(admin_id, voice_data, None, "feedback.ogg", message["voice"].get("mime_type", "audio/ogg"))
+                    await send_message(admin_id, f"📬 <b>Voice Feedback</b>\n👤 {escape_html(name)}\n🆔 <code>{cid}</code>", parse_mode="HTML", reply_markup=admin_user_reply_keyboard(cid, name))
+                await send_message(cid, "✅ Voice feedback sent!")
+                return JSONResponse({"ok": True})
+            await relay_voice_reply(cid, name, reply_target, message["voice"], is_admin(cid))
+            return JSONResponse({"ok": True})
+
         if reply_target is not None and "text" in message:
             clear_reply_state(cid)
             reply_text = message["text"].strip()
 
             if reply_target == -1:
-                feedback_msg = (
-                    f"📬 <b>New Feedback</b>\n\n"
-                    f"👤 <b>From:</b> {escape_html(name)}\n"
-                    f"🆔 <b>ID:</b> <code>{cid}</code>\n\n"
-                    f"💬 {escape_html(reply_text)}"
-                )
-                for admin_id in ADMINS:
-                    await send_message(admin_id, feedback_msg, parse_mode="HTML", reply_markup=admin_user_reply_keyboard(cid))
+                await send_feedback_to_admins(cid, name, reply_text)
                 await send_message(cid, "✅ Feedback sent!")
                 return JSONResponse({"ok": True})
 
@@ -502,7 +583,7 @@ async def webhook(request: Request):
                     f"💬 {escape_html(reply_text)}"
                 )
                 for admin_id in ADMINS:
-                    await send_message(admin_id, user_msg, parse_mode="HTML", reply_markup=admin_user_reply_keyboard(cid))
+                    await send_message(admin_id, user_msg, parse_mode="HTML", reply_markup=admin_user_reply_keyboard(cid, name))
                 await send_message(cid, "✅ Reply sent!")
             return JSONResponse({"ok": True})
 
@@ -511,6 +592,14 @@ async def webhook(request: Request):
             return JSONResponse({"ok": True})
 
         if message.get("voice"):
+            if st == "awaiting_broadcast" and is_admin(cid):
+                clear_state(cid)
+                voice_data = await download_telegram_file(message["voice"]["file_id"])
+                if not voice_data:
+                    await send_message(cid, "❌ Failed to download broadcast voice.")
+                    return JSONResponse({"ok": True})
+                await run_broadcast(cid, voice_data=voice_data, voice_mime=message["voice"].get("mime_type", "audio/ogg"))
+                return JSONResponse({"ok": True})
             ensure_user(cid, name)
             await handle_voice(cid, message["voice"], name)
             return JSONResponse({"ok": True})
@@ -718,14 +807,7 @@ async def webhook(request: Request):
                 set_reply_state(cid, -1)
                 await send_message(cid, "💬 Type your feedback:", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
-            feedback_msg = (
-                f"📬 <b>New Feedback</b>\n\n"
-                f"👤 {escape_html(name)}\n"
-                f"🆔 <code>{cid}</code>\n\n"
-                f"💬 {escape_html(feedback_text)}"
-            )
-            for admin_id in ADMINS:
-                await send_message(admin_id, feedback_msg, parse_mode="HTML", reply_markup=admin_user_reply_keyboard(cid))
+            await send_feedback_to_admins(cid, name, feedback_text)
             await send_message(cid, "✅ Feedback sent!")
             return JSONResponse({"ok": True})
 
@@ -738,24 +820,32 @@ async def webhook(request: Request):
         if text == "/help":
             ensure_user(cid, name)
             help_text = (
-                "📖 <b>Mero AI Commands</b>\n\n"
-                "/start — Restart the bot\n"
-                "/settings — Open settings menu\n"
+                "📖 <b>Mero AI Help</b>\n\n"
+                "<b>Core Commands</b>\n"
+                "/start — Restart and reset your session\n"
+                "/settings — Open settings\n"
                 "/clear — Clear chat history\n"
-                "/cls — Clear last attachment\n"
-                "/exit — Clear all data and restart\n"
-                "/history — View chat history\n"
-                "/feedback — Send feedback to admin\n"
-                "/clear_system — Clear system instructions\n"
-                "/help — Show this help message\n\n"
-                "<b>How to use:</b>\n"
-                "• Send text to chat\n"
-                "• Send images for analysis\n"
-                "• Send voice messages (up to 5 min)\n"
-                "• Send documents (PDF, DOCX, code files, etc.)\n"
-                "• Send audio/video files\n"
-                "• Send YouTube links for video analysis\n"
-                "• Ask to generate images\n"
+                "/cls — Clear stored attachment\n"
+                "/history — View recent chat history\n"
+                "/feedback — Send feedback (text or voice)\n"
+                "/clear_system — Remove custom system instructions\n"
+                "/help — Show this help\n\n"
+                "<b>Admin Commands</b>\n"
+                "/total — View all users\n"
+                "/sendMessage &lt;id&gt; - &lt;text&gt; — Message a user\n"
+                "/broadcast &lt;text&gt; — Broadcast text\n"
+                "/ban &lt;id&gt; — Ban user\n"
+                "/unban &lt;id&gt; — Unban user\n\n"
+                "<b>Supported Inputs</b>\n"
+                "• Text prompts and coding requests\n"
+                "• Documents and code files (HTML, Markdown, PDF, DOCX, XLSX, TXT, etc.)\n"
+                "• Audio and voice files\n"
+                "• Videos and animations\n"
+                "• Images and stickers\n\n"
+                "<b>New Features</b>\n"
+                "• AI model setting: Mero Lite (default) or Mero Pro\n"
+                "• Voice feedback, voice replies, and voice broadcasts\n"
+                "• Admin quick message buttons in total users list\n"
             )
             await send_message(cid, help_text, parse_mode="HTML")
             return JSONResponse({"ok": True})

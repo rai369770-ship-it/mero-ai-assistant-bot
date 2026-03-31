@@ -32,9 +32,9 @@ async def send_photo(cid: int, photo_url: str, caption: Optional[str] = None, re
         return (await client.post(f"{TELEGRAM_API}/sendPhoto", json=payload)).json()
 
 
-async def send_voice_bytes(cid: int, audio_bytes: bytes, caption: Optional[str] = None) -> dict:
+async def send_voice_bytes(cid: int, audio_bytes: bytes, caption: Optional[str] = None, filename: str = "response.ogg", mime_type: str = "audio/ogg") -> dict:
     async with httpx.AsyncClient(timeout=60.0) as client:
-        files = {"voice": ("response.mp3", audio_bytes, "audio/mpeg")}
+        files = {"voice": (filename, audio_bytes, mime_type)}
         data: dict = {"chat_id": str(cid)}
         if caption:
             data["caption"] = caption[:1024]

@@ -1,12 +1,40 @@
 import base64
-from typing import Optional
-from database import save_message, save_file_data, set_state, get_file_data, ensure_user
+from database import save_message, save_file_data, set_state, ensure_user
 from message import send_message, send_chat_action, download_telegram_file, get_telegram_file_info
 from upload import upload_to_gemini_files, detect_mime_type, get_display_name
 from api import handle_gemini
 from system import get_system_text
 from settings import photo_keyboard, file_prompt_keyboard
 from markdown_parse import escape_html
+
+
+async def _store_and_prompt(cid: int, file_name: str, mime: str, file_bytes: bytes, uploaded: dict | None, icon: str, label: str) -> None:
+    if uploaded:
+        save_file_data(cid, {"uri": uploaded["uri"], "mime_type": uploaded["mime_type"], "name": uploaded["name"], "display_name": file_name})
+    else:
+        encoded = base64.b64encode(file_bytes).decode("utf-8")
+        save_file_data(cid, {"uri": "", "mime_type": mime, "name": "", "display_name": file_name, "base64": encoded})
+    set_state(cid, f"awaiting_file_prompt:{file_name}")
+    await send_message(
+        cid,
+        f"✅ {label} uploaded: <b>{escape_html(file_name)}</b>\n\nType your prompt for this file.",
+        parse_mode="HTML",
+        reply_markup=file_prompt_keyboard(),
+    )
+
+
+async def _process_non_image(cid: int, name: str, file_name: str, mime: str, file_bytes: bytes, caption: str, tag: str, upload_label: str) -> None:
+    uploaded = await upload_to_gemini_files(file_bytes, mime, file_name)
+    if caption:
+        save_message(cid, "user", f"[{tag}: {file_name}] {caption}")
+        parts: list = [{"text": caption}]
+        if uploaded:
+            parts.append({"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}})
+        else:
+            parts.append({"inlineData": {"mimeType": mime, "data": base64.b64encode(file_bytes).decode("utf-8")}})
+        await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
+        return
+    await _store_and_prompt(cid, file_name, mime, file_bytes, uploaded, upload_label, tag)
 
 
 async def handle_photo(cid: int, message: dict, name: str) -> None:
@@ -32,33 +60,18 @@ async def handle_photo(cid: int, message: dict, name: str) -> None:
         save_file_data(cid, {"uri": "", "mime_type": "image/jpeg", "name": "", "display_name": display, "base64": encoded})
         if caption:
             save_message(cid, "user", f"[Image] {caption}")
-            parts: list = [
-                {"text": caption},
-                {"inlineData": {"mimeType": "image/jpeg", "data": encoded}},
-            ]
+            parts: list = [{"text": caption}, {"inlineData": {"mimeType": "image/jpeg", "data": encoded}}]
             await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
         else:
-            await send_message(
-                cid,
-                f"✅ Image uploaded: <b>{escape_html(display)}</b>\n\nType your prompt or tap Describe.",
-                parse_mode="HTML",
-                reply_markup=photo_keyboard(),
-            )
+            await send_message(cid, f"✅ Image uploaded: <b>{escape_html(display)}</b>\n\nType your prompt or tap Describe.", parse_mode="HTML", reply_markup=photo_keyboard())
         return
+    save_file_data(cid, {"uri": uploaded["uri"], "mime_type": uploaded["mime_type"], "name": uploaded["name"], "display_name": display})
     if caption:
         save_message(cid, "user", f"[Image: {display}] {caption}")
-        parts2: list = [
-            {"text": caption},
-            {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}},
-        ]
+        parts2: list = [{"text": caption}, {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}}]
         await handle_gemini(cid, parts2, get_system_text(name, cid), use_tools=False)
-    else:
-        await send_message(
-            cid,
-            f"✅ Image uploaded: <b>{escape_html(display)}</b>\n\nType your prompt or tap Describe.",
-            parse_mode="HTML",
-            reply_markup=photo_keyboard(),
-        )
+        return
+    await send_message(cid, f"✅ Image uploaded: <b>{escape_html(display)}</b>\n\nType your prompt or tap Describe.", parse_mode="HTML", reply_markup=photo_keyboard())
 
 
 async def handle_document(cid: int, message: dict, name: str) -> None:
@@ -80,25 +93,7 @@ async def handle_document(cid: int, message: dict, name: str) -> None:
     file_info = await get_telegram_file_info(doc["file_id"])
     file_path = file_info.get("file_path", file_name) if file_info else file_name
     mime = detect_mime_type(file_path, provided_mime)
-    uploaded = await upload_to_gemini_files(file_bytes, mime, file_name)
-    if not uploaded:
-        await send_message(cid, "❌ Failed to upload file to AI engine. Try a different format.")
-        return
-    if caption:
-        save_message(cid, "user", f"[File: {file_name}] {caption}")
-        parts: list = [
-            {"text": caption},
-            {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}},
-        ]
-        await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
-    else:
-        set_state(cid, f"awaiting_file_prompt:{file_name}")
-        await send_message(
-            cid,
-            f"✅ File uploaded: <b>{escape_html(file_name)}</b>\n\nType your prompt for this file.",
-            parse_mode="HTML",
-            reply_markup=file_prompt_keyboard(),
-        )
+    await _process_non_image(cid, name, file_name, mime, file_bytes, caption, "File", "📄")
 
 
 async def handle_audio(cid: int, message: dict, name: str) -> None:
@@ -118,25 +113,7 @@ async def handle_audio(cid: int, message: dict, name: str) -> None:
         await send_message(cid, "❌ Failed to download audio.")
         return
     mime = detect_mime_type(file_name, provided_mime)
-    uploaded = await upload_to_gemini_files(file_bytes, mime, file_name)
-    if not uploaded:
-        await send_message(cid, "❌ Failed to upload audio to AI engine.")
-        return
-    if caption:
-        save_message(cid, "user", f"[Audio: {file_name}] {caption}")
-        parts: list = [
-            {"text": caption},
-            {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}},
-        ]
-        await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
-    else:
-        set_state(cid, f"awaiting_file_prompt:{file_name}")
-        await send_message(
-            cid,
-            f"✅ Audio uploaded: <b>{escape_html(file_name)}</b>\n\nType your prompt for this audio.",
-            parse_mode="HTML",
-            reply_markup=file_prompt_keyboard(),
-        )
+    await _process_non_image(cid, name, file_name, mime, file_bytes, caption, "Audio", "🎵")
 
 
 async def handle_video(cid: int, message: dict, name: str) -> None:
@@ -156,25 +133,7 @@ async def handle_video(cid: int, message: dict, name: str) -> None:
         await send_message(cid, "❌ Failed to download video.")
         return
     mime = detect_mime_type(file_name, provided_mime)
-    uploaded = await upload_to_gemini_files(file_bytes, mime, file_name)
-    if not uploaded:
-        await send_message(cid, "❌ Failed to upload video to AI engine.")
-        return
-    if caption:
-        save_message(cid, "user", f"[Video: {file_name}] {caption}")
-        parts: list = [
-            {"text": caption},
-            {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}},
-        ]
-        await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
-    else:
-        set_state(cid, f"awaiting_file_prompt:{file_name}")
-        await send_message(
-            cid,
-            f"✅ Video uploaded: <b>{escape_html(file_name)}</b>\n\nType your prompt for this video.",
-            parse_mode="HTML",
-            reply_markup=file_prompt_keyboard(),
-        )
+    await _process_non_image(cid, name, file_name, mime, file_bytes, caption, "Video", "🎬")
 
 
 async def handle_animation(cid: int, message: dict, name: str) -> None:
@@ -190,25 +149,7 @@ async def handle_animation(cid: int, message: dict, name: str) -> None:
         await send_message(cid, "❌ Failed to download animation.")
         return
     mime = detect_mime_type(file_name, provided_mime)
-    uploaded = await upload_to_gemini_files(file_bytes, mime, file_name)
-    if not uploaded:
-        await send_message(cid, "❌ Failed to upload animation to AI engine.")
-        return
-    if caption:
-        save_message(cid, "user", f"[Animation: {file_name}] {caption}")
-        parts: list = [
-            {"text": caption},
-            {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}},
-        ]
-        await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
-    else:
-        set_state(cid, f"awaiting_file_prompt:{file_name}")
-        await send_message(
-            cid,
-            f"✅ Animation uploaded: <b>{escape_html(file_name)}</b>\n\nType your prompt.",
-            parse_mode="HTML",
-            reply_markup=file_prompt_keyboard(),
-        )
+    await _process_non_image(cid, name, file_name, mime, file_bytes, caption, "Animation", "🎞️")
 
 
 async def handle_sticker(cid: int, message: dict, name: str) -> None:
@@ -225,18 +166,11 @@ async def handle_sticker(cid: int, message: dict, name: str) -> None:
     uploaded = await upload_to_gemini_files(file_bytes, "image/webp", "sticker.webp")
     if uploaded:
         save_message(cid, "user", "[Sticker] Describe this sticker")
-        parts: list = [
-            {"text": "Describe this sticker and react to it naturally."},
-            {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}},
-        ]
+        parts: list = [{"text": "Describe this sticker and react to it naturally."}, {"fileData": {"mimeType": uploaded["mime_type"], "fileUri": uploaded["uri"]}}]
         await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
-    else:
-        import base64
-        encoded = base64.b64encode(file_bytes).decode("utf-8")
-        save_file_data(cid, {"uri": "", "mime_type": "image/webp", "name": "", "display_name": "sticker.webp", "base64": encoded})
-        save_message(cid, "user", "[Sticker] Describe this sticker")
-        parts2: list = [
-            {"text": "Describe this sticker and react to it naturally."},
-            {"inlineData": {"mimeType": "image/webp", "data": encoded}},
-        ]
-        await handle_gemini(cid, parts2, get_system_text(name, cid), use_tools=False)
+        return
+    encoded = base64.b64encode(file_bytes).decode("utf-8")
+    save_file_data(cid, {"uri": "", "mime_type": "image/webp", "name": "", "display_name": "sticker.webp", "base64": encoded})
+    save_message(cid, "user", "[Sticker] Describe this sticker")
+    parts2: list = [{"text": "Describe this sticker and react to it naturally."}, {"inlineData": {"mimeType": "image/webp", "data": encoded}}]
+    await handle_gemini(cid, parts2, get_system_text(name, cid), use_tools=False)
