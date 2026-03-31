@@ -1,11 +1,18 @@
 import base64
-from typing import Optional
 from database import save_message, get_file_data, get_user_voice
 from message import send_message, download_telegram_file, send_chat_action, send_voice_bytes
-from upload import upload_to_gemini_files
 from api import call_gemini_raw, handle_gemini
 from system import get_system_text
 from tts import generate_tts
+
+
+def _voice_mime_type(voice: dict) -> str:
+    mime = (voice.get("mime_type") or "").strip().lower()
+    if not mime:
+        return "audio/ogg"
+    if "/" not in mime:
+        return "audio/ogg"
+    return mime
 
 
 async def handle_voice(cid: int, voice: dict, name: str) -> None:
@@ -18,30 +25,22 @@ async def handle_voice(cid: int, voice: dict, name: str) -> None:
     if not voice_data:
         await send_message(cid, "❌ Failed to download voice message.")
         return
-    mime_type = voice.get("mime_type", "audio/ogg")
-    uploaded_voice = await upload_to_gemini_files(voice_data, mime_type, "voice_message.ogg")
-    if uploaded_voice:
-        transcription = await call_gemini_raw(
-            [
-                {"text": "Transcribe the following voice in the original language. Don't write anything else except transcription."},
-                {"fileData": {"mimeType": uploaded_voice["mime_type"], "fileUri": uploaded_voice["uri"]}},
-            ],
-            "You are a transcription engine. Output only the transcription.",
-        )
-    else:
-        encoded_voice = base64.b64encode(voice_data).decode("utf-8")
-        transcription = await call_gemini_raw(
-            [
-                {"text": "Transcribe the following voice in the original language. Don't write anything else except transcription."},
-                {"inlineData": {"mimeType": mime_type, "data": encoded_voice}},
-            ],
-            "You are a transcription engine. Output only the transcription.",
-        )
-    if not transcription:
+    mime_type = _voice_mime_type(voice)
+    encoded_voice = base64.b64encode(voice_data).decode("ascii")
+    transcription = await call_gemini_raw(
+        [
+            {"text": "Transcribe the following voice in the original language. Don't write anything else except transcription."},
+            {"inlineData": {"mimeType": mime_type, "data": encoded_voice}},
+        ],
+        "You are a transcription engine. Output only the transcription.",
+        model="gemini-2.5-flash",
+    )
+    transcription_text = (transcription or "").strip()
+    if not transcription_text or transcription_text in ("No response received from AI.", "Failed to parse AI response."):
         await send_message(cid, "❌ Failed to transcribe voice message.")
         return
-    save_message(cid, "user", f"[Voice] {transcription}")
-    current_parts: list = [{"text": transcription}]
+    save_message(cid, "user", f"[Voice] {transcription_text}")
+    current_parts: list = [{"text": transcription_text}]
     file_data = get_file_data(cid)
     has_file = False
     if file_data and file_data.get("uri"):
