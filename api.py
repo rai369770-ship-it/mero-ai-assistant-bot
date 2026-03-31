@@ -2,25 +2,25 @@ import json
 import httpx
 from typing import Optional
 from config import MODEL, CONTEXT_SIZE
-from api_keys import fetch_api_keys, get_keys
+from api_keys import fetch_api_keys, get_keys_turn_by_turn
 from database import get_recent_history, save_message
 from markdown_parse import markdown_to_html, escape_html
 from message import send_message
 
 
 async def try_api_call(body_json: str) -> tuple[Optional[str], Optional[str]]:
-    keys = get_keys()
+    keys = get_keys_turn_by_turn()
     if not keys:
         return None, "No API keys available"
-    for i in range(len(keys)):
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={keys[i]}"
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for key in keys:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={key}"
+            try:
                 resp = await client.post(url, content=body_json, headers={"Content-Type": "application/json"})
                 if resp.status_code == 200:
                     return resp.text, None
-        except Exception:
-            continue
+            except Exception:
+                continue
     return None, "All API keys exhausted"
 
 
