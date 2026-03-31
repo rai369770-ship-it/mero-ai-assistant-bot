@@ -2,18 +2,16 @@ import json
 import asyncio
 import httpx
 from typing import Optional
-from api_keys import fetch_api_keys, get_keys
+from api_keys import fetch_api_keys, get_keys_turn_by_turn
 from config import GEMINI_FILES_API, GEMINI_FILES_GET, SUPPORTED_MIME_TYPES, CODE_EXTENSIONS
 
 
 async def upload_to_gemini_files(file_bytes: bytes, mime_type: str, display_name: str) -> Optional[dict]:
     if not await fetch_api_keys():
         return None
-    keys = get_keys()
+    keys = get_keys_turn_by_turn()
     if not keys:
         return None
-    key = keys[0]
-    upload_url = f"{GEMINI_FILES_API}?key={key}"
     metadata = json.dumps({"file": {"displayName": display_name}})
     boundary = "----GeminiBoundary7MA4YWxkTrZu0gW"
     body = (
@@ -26,8 +24,11 @@ async def upload_to_gemini_files(file_bytes: bytes, mime_type: str, display_name
     headers = {"Content-Type": f"multipart/related; boundary={boundary}"}
     try:
         async with httpx.AsyncClient(timeout=120.0) as client:
-            resp = await client.post(upload_url, content=body, headers=headers)
-            if resp.status_code == 200:
+            for key in keys:
+                upload_url = f"{GEMINI_FILES_API}?key={key}"
+                resp = await client.post(upload_url, content=body, headers=headers)
+                if resp.status_code != 200:
+                    continue
                 result = resp.json()
                 file_info = result.get("file", {})
                 file_uri = file_info.get("uri", "")
@@ -37,16 +38,17 @@ async def upload_to_gemini_files(file_bytes: bytes, mime_type: str, display_name
                     for _ in range(30):
                         await asyncio.sleep(2)
                         check_resp = await client.get(f"{GEMINI_FILES_GET}/{file_name}?key={key}")
-                        if check_resp.status_code == 200:
-                            check_data = check_resp.json()
-                            if check_data.get("state") == "ACTIVE":
-                                return {
-                                    "uri": check_data.get("uri", file_uri),
-                                    "mime_type": check_data.get("mimeType", mime_type),
-                                    "name": file_name,
-                                    "display_name": display_name,
-                                }
-                    return None
+                        if check_resp.status_code != 200:
+                            continue
+                        check_data = check_resp.json()
+                        if check_data.get("state") == "ACTIVE":
+                            return {
+                                "uri": check_data.get("uri", file_uri),
+                                "mime_type": check_data.get("mimeType", mime_type),
+                                "name": file_name,
+                                "display_name": display_name,
+                            }
+                    continue
                 return {
                     "uri": file_uri,
                     "mime_type": mime_type,

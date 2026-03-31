@@ -1,26 +1,26 @@
 import json
 import httpx
 from typing import Optional
-from config import MODEL, CONTEXT_SIZE
-from api_keys import fetch_api_keys, get_keys
-from database import get_recent_history, save_message
+from config import CONTEXT_SIZE
+from api_keys import fetch_api_keys, get_keys_turn_by_turn
+from database import get_recent_history, save_message, get_user_model
 from markdown_parse import markdown_to_html, escape_html
 from message import send_message
 
 
-async def try_api_call(body_json: str) -> tuple[Optional[str], Optional[str]]:
-    keys = get_keys()
+async def try_api_call(body_json: str, model: str) -> tuple[Optional[str], Optional[str]]:
+    keys = get_keys_turn_by_turn()
     if not keys:
         return None, "No API keys available"
-    for i in range(len(keys)):
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent?key={keys[i]}"
-        try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+    async with httpx.AsyncClient(timeout=120.0) as client:
+        for key in keys:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            try:
                 resp = await client.post(url, content=body_json, headers={"Content-Type": "application/json"})
                 if resp.status_code == 200:
                     return resp.text, None
-        except Exception:
-            continue
+            except Exception:
+                continue
     return None, "All API keys exhausted"
 
 
@@ -35,7 +35,7 @@ def build_body(history_messages: list[dict], current_parts: list, system_text: s
     body: dict = {
         "system_instruction": {"parts": [{"text": system_text}]},
         "contents": contents,
-        "generationConfig": {"maxOutputTokens": 4096},
+        "generationConfig": {"maxOutputTokens": 8192},
     }
     if use_tools:
         body["tools"] = [{"google_search": {}}, {"url_context": {}}]
@@ -78,15 +78,18 @@ def format_response_with_sources(ai_text: str, sources: list[dict]) -> str:
     return html
 
 
-async def call_gemini_raw(parts: list, system_text: str) -> Optional[str]:
+async def call_gemini_raw(parts: list, system_text: str, cid: Optional[int] = None, use_tools: bool = False) -> Optional[str]:
     if not await fetch_api_keys():
         return None
+    model = get_user_model(cid) if cid is not None else "gemini-2.5-flash-lite"
     body = {
         "system_instruction": {"parts": [{"text": system_text}]},
         "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {"maxOutputTokens": 4096},
+        "generationConfig": {"maxOutputTokens": 8192},
     }
-    content, _ = await try_api_call(json.dumps(body))
+    if use_tools:
+        body["tools"] = [{"google_search": {}}, {"url_context": {}}]
+    content, _ = await try_api_call(json.dumps(body), model)
     if not content:
         return None
     text, _ = extract_ai_text(content)
@@ -101,7 +104,7 @@ async def handle_gemini(cid: int, current_parts: list, system_text: str, use_too
         save_message(cid, "model", msg)
         await send_message(cid, msg)
         return None
-    content, err = await try_api_call(json.dumps(body))
+    content, err = await try_api_call(json.dumps(body), get_user_model(cid))
     if content:
         ai_text, sources = extract_ai_text(content)
         save_message(cid, "model", ai_text)
@@ -111,8 +114,7 @@ async def handle_gemini(cid: int, current_parts: list, system_text: str, use_too
         else:
             await send_message(cid, ai_text)
         return ai_text
-    else:
-        error = f"Error: {err or 'Unknown error occurred'}"
-        save_message(cid, "model", error)
-        await send_message(cid, error)
-        return None
+    error = f"Error: {err or 'Unknown error occurred'}"
+    save_message(cid, "model", error)
+    await send_message(cid, error)
+    return None
