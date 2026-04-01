@@ -224,16 +224,13 @@ async def webhook(request: Request):
                 prompt = "Describe this image in detail."
                 save_message(cid, "user", f"[Image] {prompt}")
                 parts: list = [{"text": prompt}]
-                if fd.get("uri"):
-                    parts.append({"fileData": {"mimeType": fd["mime_type"], "fileUri": fd["uri"]}})
-                elif fd.get("base64"):
+                if fd.get("base64"):
                     parts.append({"inlineData": {"mimeType": fd["mime_type"], "data": fd["base64"]}})
                 await handle_gemini(
                     cid,
                     parts,
                     get_system_text(name, cid),
                     use_tools=False,
-                    preferred_key=fd.get("api_key", ""),
                 )
                 return JSONResponse({"ok": True})
 
@@ -583,16 +580,13 @@ async def webhook(request: Request):
                     file_display = st.split(":", 1)[1] if ":" in st else "file"
                     save_message(cid, "user", f"[File: {file_display}] {text}")
                     parts: list = [{"text": text}]
-                    if fd.get("uri"):
-                        parts.append({"fileData": {"mimeType": fd["mime_type"], "fileUri": fd["uri"]}})
-                    elif fd.get("base64"):
+                    if fd.get("base64"):
                         parts.append({"inlineData": {"mimeType": fd["mime_type"], "data": fd["base64"]}})
                     await handle_gemini(
                         cid,
                         parts,
                         get_system_text(name, cid),
                         use_tools=False,
-                        preferred_key=fd.get("api_key", ""),
                     )
                     return JSONResponse({"ok": True})
 
