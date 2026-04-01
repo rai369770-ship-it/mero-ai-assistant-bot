@@ -27,19 +27,14 @@ async def execute_normal_message(cid: int, query: str, name: str) -> None:
     current_parts: list = [{"text": query}]
     file_data = get_file_data(cid)
     has_file = False
-    if file_data:
-        if file_data.get("uri"):
-            current_parts.append({"fileData": {"mimeType": file_data["mime_type"], "fileUri": file_data["uri"]}})
-            has_file = True
-        elif file_data.get("base64"):
-            current_parts.append({"inlineData": {"mimeType": file_data["mime_type"], "data": file_data["base64"]}})
-            has_file = True
+    if file_data and file_data.get("base64"):
+        current_parts.append({"inlineData": {"mimeType": file_data["mime_type"], "data": file_data["base64"]}})
+        has_file = True
     await handle_gemini(
         cid,
         current_parts,
         get_system_text(name, cid),
         use_tools=not has_file,
-        preferred_key=file_data.get("api_key", "") if file_data else None,
     )
 
 
