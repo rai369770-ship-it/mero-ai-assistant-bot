@@ -19,7 +19,7 @@ from message import (
     send_message, send_photo, send_voice_bytes,
     download_telegram_file, get_telegram_file_info,
     answer_callback, edit_message, delete_message,
-    send_chat_action, send_document_bytes,
+    send_chat_action, send_document_bytes, copy_message,
 )
 from settings import (
     btn, url_btn, ikb,
@@ -125,6 +125,27 @@ async def run_broadcast(admin_id: int, text: str | None = None, voice_data: byte
         except Exception:
             fail += 1
     await send_message(admin_id, f"📢 Broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}")
+
+
+async def run_broadcast_copy(admin_id: int, source_chat_id: int, source_message_id: int) -> None:
+    users = get_all_users()
+    success, fail = 0, 0
+    for uid in users:
+        target = int(uid)
+        try:
+            result = await copy_message(
+                to_chat_id=target,
+                from_chat_id=source_chat_id,
+                message_id=source_message_id,
+                reply_markup=broadcast_reply_keyboard(),
+            )
+            if result and result.get("ok"):
+                success += 1
+            else:
+                fail += 1
+        except Exception:
+            fail += 1
+    await send_message(admin_id, f"📢 Attachment broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}")
 
 
 @app.get("/")
@@ -297,7 +318,7 @@ async def webhook(request: Request):
             if cb_data == "feedback_prompt":
                 await answer_callback(cb_id)
                 set_reply_state(cid, -1)
-                await send_message(cid, "💬 Write your feedback or record your voice.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, "💬 Send feedback as text, voice, photo, document, audio, video, animation, or sticker.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
             if cb_data == "cancel_reply":
@@ -448,7 +469,7 @@ async def webhook(request: Request):
             if cb_data.startswith("reply_admin:"):
                 await answer_callback(cb_id)
                 set_reply_state(cid, ADMINS[0])
-                await send_message(cid, "✍️ Write your message or record your voice for admin.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, "✍️ Reply to admin with text, voice, or any attachment.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
             if cb_data.startswith("reply_user:"):
@@ -456,7 +477,7 @@ async def webhook(request: Request):
                 await answer_callback(cb_id)
                 set_reply_state(cid, target)
                 target_name = get_username(target)
-                await send_message(cid, f"✍️ Message <b>{escape_html(target_name)}</b> (<code>{target}</code>). Write your message or record your voice:", parse_mode="HTML", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, f"✍️ Message <b>{escape_html(target_name)}</b> (<code>{target}</code>). Send text, voice, or any attachment:", parse_mode="HTML", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
             if cb_data.startswith("regen_img:"):
@@ -539,7 +560,7 @@ async def webhook(request: Request):
                     return JSONResponse({"ok": True})
                 await answer_callback(cb_id)
                 set_state(cid, "awaiting_broadcast")
-                await send_message(cid, "📢 Send your broadcast as text or voice:", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, "📢 Send your broadcast as text, voice, photo, document, audio, video, animation, or sticker.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
             return JSONResponse({"ok": True})
@@ -556,6 +577,11 @@ async def webhook(request: Request):
             return JSONResponse({"ok": True})
 
         st = get_state(cid)
+        if st == "awaiting_broadcast" and is_admin(cid) and "text" not in message:
+            clear_state(cid)
+            await run_broadcast_copy(cid, cid, message["message_id"])
+            return JSONResponse({"ok": True})
+
         if st and "text" in message:
             text = message["text"].strip()
 
@@ -625,6 +651,27 @@ async def webhook(request: Request):
             await relay_voice_reply(cid, name, reply_target, message["voice"], is_admin(cid))
             return JSONResponse({"ok": True})
 
+        attachment_keys = ("photo", "document", "audio", "video", "video_note", "animation", "sticker")
+        if reply_target is not None and any(message.get(key) for key in attachment_keys):
+            clear_reply_state(cid)
+            if reply_target == -1:
+                for admin_id in ADMINS:
+                    await copy_message(admin_id, cid, message["message_id"], reply_markup=admin_user_reply_keyboard(cid, name))
+                    await send_message(admin_id, f"📬 <b>Attachment Feedback</b>\n👤 {escape_html(name)}\n🆔 <code>{cid}</code>", parse_mode="HTML")
+                await send_message(cid, "✅ Attachment feedback sent!")
+                return JSONResponse({"ok": True})
+
+            if is_admin(cid):
+                result = await copy_message(reply_target, cid, message["message_id"], reply_markup=admin_reply_keyboard(reply_target))
+                status = "✅ Sent" if result and result.get("ok") else "❌ Failed"
+                await send_message(cid, f"{status} attachment to <code>{reply_target}</code>.", parse_mode="HTML")
+            else:
+                for admin_id in ADMINS:
+                    await copy_message(admin_id, cid, message["message_id"], reply_markup=admin_user_reply_keyboard(cid, name))
+                    await send_message(admin_id, f"📩 <b>Attachment reply from user</b>\n\n👤 {escape_html(name)}\n🆔 <code>{cid}</code>", parse_mode="HTML")
+                await send_message(cid, "✅ Attachment reply sent!")
+            return JSONResponse({"ok": True})
+
         if reply_target is not None and "text" in message:
             clear_reply_state(cid)
             reply_text = message["text"].strip()
@@ -656,14 +703,6 @@ async def webhook(request: Request):
             return JSONResponse({"ok": True})
 
         if message.get("voice"):
-            if st == "awaiting_broadcast" and is_admin(cid):
-                clear_state(cid)
-                voice_data = await download_telegram_file(message["voice"]["file_id"])
-                if not voice_data:
-                    await send_message(cid, "❌ Failed to download broadcast voice.")
-                    return JSONResponse({"ok": True})
-                await run_broadcast(cid, voice_data=voice_data, voice_mime=message["voice"].get("mime_type", "audio/ogg"))
-                return JSONResponse({"ok": True})
             ensure_user(cid, name)
             await handle_voice(cid, message["voice"], name)
             return JSONResponse({"ok": True})
@@ -707,6 +746,7 @@ async def webhook(request: Request):
                 f"💬 <b>Natural Conversations</b> — Chat naturally on any topic\n"
                 f"🌐 <b>Real-time Web Search</b> — Get the most up-to-date information\n"
                 f"🎬 <b>YouTube Analysis</b> — Transcribe, summarize &amp; analyze videos\n"
+                f"🧾 <b>Text to PDF</b> — Create downloadable PDF files from your prompts\n"
                 f"🎨 <b>Image Generation</b> — Create stunning AI-generated images\n"
                 f"🖼️ <b>Image Analysis</b> — Upload a photo and get detailed descriptions\n"
                 f"🔗 <b>URL Browsing</b> — Browse and analyze any public webpage\n"
@@ -869,7 +909,7 @@ async def webhook(request: Request):
             feedback_text = text.replace("/feedback", "", 1).strip()
             if not feedback_text:
                 set_reply_state(cid, -1)
-                await send_message(cid, "💬 Write your feedback or record your voice.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                await send_message(cid, "💬 Send feedback as text, voice, photo, document, audio, video, animation, or sticker.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
             await send_feedback_to_admins(cid, name, feedback_text)
             await send_message(cid, "✅ Feedback sent!")
@@ -910,7 +950,7 @@ async def webhook(request: Request):
                     "/clear — Clear chat history\n"
                     "/cls — Clear stored attachment\n"
                     "/history — View recent chat history\n"
-                    "/feedback — Send feedback (text or voice)\n"
+                    "/feedback — Send feedback (text, voice, or attachments)\n"
                     "/clear_system — Remove custom system instructions\n"
                     "/help — Show this help\n\n"
                     "<b>Supported Inputs</b>\n"

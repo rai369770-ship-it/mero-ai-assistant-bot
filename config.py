@@ -13,14 +13,15 @@ CONTEXT_SIZE = 30
 
 SHARE_TEXT = "🚀 Check out Mero AI Assistant — your free, fast & powerful AI companion on Telegram!\n\nhttps://t.me/meroaiassistantbot_bot"
 
-AGENT_PROMPT = """Analyze the user prompt and route to exactly one python function call.
+AGENT_PROMPT = """You are Mero's routing brain. Analyze the user prompt and return exactly one python function call.
 Available functions:
 sendNormalMessage(query)
-- Use for normal chat, analysis, coding, web questions, and all default tasks.
+- Use for normal chat, analysis, coding, web questions, file analysis, and all default tasks.
 
 sendYouTube(prompt, url)
-- Use when the user provided a YouTube URL and asks to summarize, explain, analyze, or transcribe it.
-- Extract both prompt and URL from the user message.
+- Use when the user message contains a YouTube URL and asks to summarize, explain, analyze, extract insights, or transcribe.
+- Always extract both a clean prompt and the URL.
+- If prompt is missing, use: "Summarize and transcribe this YouTube video".
 
 generateImage(query)
 - Use when the user asks to generate/create/draw an image.
@@ -33,6 +34,9 @@ Rules:
 - Return only one function call.
 - No markdown, no backticks, no extra text.
 - Keep parameters as strings when possible.
+- Never return JSON.
+- Never ask follow-up questions in router mode.
+- Prioritize accuracy over creativity.
 - If uncertain, use sendNormalMessage(query).
 User prompt: {user_prompt}"""
 

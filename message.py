@@ -93,3 +93,16 @@ async def send_document_bytes(cid: int, file_bytes: bytes, filename: str, captio
         if caption:
             data["caption"] = caption[:1024]
         return (await client.post(f"{TELEGRAM_API}/sendDocument", files=files, data=data)).json()
+
+
+async def copy_message(to_chat_id: int, from_chat_id: int, message_id: int, reply_markup: Optional[dict] = None) -> Optional[dict]:
+    payload: dict = {
+        "chat_id": to_chat_id,
+        "from_chat_id": from_chat_id,
+        "message_id": message_id,
+    }
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        resp = await client.post(f"{TELEGRAM_API}/copyMessage", json=payload)
+        return resp.json()
