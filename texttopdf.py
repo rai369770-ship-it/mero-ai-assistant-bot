@@ -1,6 +1,7 @@
 import io
+import json
 import re
-from html import escape
+from html import escape, unescape
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
@@ -84,10 +85,48 @@ def _extract_blocks(page_text: str) -> list[ContentBlock]:
     return blocks
 
 
+def _prepare_markup(raw: str) -> str:
+    text = (raw or "").strip()
+    if not text:
+        return ""
+
+    # Remove fenced wrappers commonly returned by models.
+    text = re.sub(r"^\s*```(?:xml|html|markdown|md|text)?\s*", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\s*```\s*$", "", text)
+
+    # Handle JSON wrappers like {"content":"<page>..."} or a quoted string with escaped \n.
+    maybe_json = text.strip()
+    if (maybe_json.startswith("{") and maybe_json.endswith("}")) or (maybe_json.startswith('"') and maybe_json.endswith('"')):
+        try:
+            decoded = json.loads(maybe_json)
+            if isinstance(decoded, str):
+                text = decoded
+            elif isinstance(decoded, dict):
+                for key in ("content", "text", "markup", "pdf", "response"):
+                    if isinstance(decoded.get(key), str):
+                        text = decoded[key]
+                        break
+        except Exception:
+            pass
+
+    text = unescape(text)
+    text = text.replace("\\n", "\n").replace("\\t", "\t")
+    return text.strip()
+
+
 def parse_pdf_markup(markup: str) -> PdfDocument:
-    pages_raw = re.findall(r"<page>(.*?)</page>", markup, flags=re.IGNORECASE | re.DOTALL)
+    cleaned_markup = _prepare_markup(markup)
+    pages_raw = re.findall(r"<page>(.*?)</page>", cleaned_markup, flags=re.IGNORECASE | re.DOTALL)
+
+    # Fallback: if model returns page-break tags but no <page> wrappers.
+    if not pages_raw and cleaned_markup:
+        chunks = re.split(r"<page-break\s*/?>", cleaned_markup, flags=re.IGNORECASE)
+        pages_raw = [chunk for chunk in chunks if chunk.strip()]
+
+    if not pages_raw and cleaned_markup:
+        pages_raw = [cleaned_markup]
     if not pages_raw:
-        raise ValueError("No <page> blocks found in model output.")
+        raise ValueError("No content found in model output.")
 
     pages = [PdfPage(blocks=_extract_blocks(chunk)) for chunk in pages_raw]
     try:
@@ -122,17 +161,18 @@ def render_pdf(doc: PdfDocument) -> bytes:
             story.append(PageBreak())
 
         for block in page.blocks:
+            safe_text = escape(block.text).replace("\n", "<br/>")
             if block.type == "text":
-                story.append(Paragraph(escape(block.text), title_style))
+                story.append(Paragraph(safe_text, title_style))
                 story.append(Spacer(1, 4))
                 continue
 
             if block.type == "color":
                 color_value = _normalize_color(block.color)
-                story.append(Paragraph(f'<font color="{color_value}">{escape(block.text)}</font>', para_style))
+                story.append(Paragraph(f'<font color="{color_value}">{safe_text}</font>', para_style))
                 continue
 
-            story.append(Paragraph(escape(block.text), para_style))
+            story.append(Paragraph(safe_text, para_style))
 
     pdf.build(story)
     return buf.getvalue()
@@ -145,9 +185,10 @@ async def execute_text_to_pdf(cid: int, prompt: str) -> None:
         "If the user asks you about generating pdf from text, return texttopdf function with (prompt) parameter. "
         "with the following prompt. \n"
         '"Create text content to generate a pdf on ..... topic. Search the web and add requested pages. '
-        "Return the document in a dictionary in this style:\n"
+        "Return clean XML-like markup in this style:\n"
         "<page>\n<text>text</text>\n</page>\n<page>\n</page>\n"
-        "Like this, add pages. You can use <paragraph>, <color>, <page-break> etc tags. "
+        "Use only these tags: <page>, <text>, <paragraph>, <color>. "
+        "Never return markdown fences, JSON, escaped tags, or explanations. "
         "Only return the content for pdf. "
         "Only return asked functions with specified parameter."
     )
