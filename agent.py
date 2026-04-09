@@ -20,6 +20,11 @@ def parse_agent_response(response: str) -> tuple[str, dict]:
     if (m := re.search(r"sendYouTube\(\s*[\"'](.+?)[\"']\s*,\s*(.+?)\s*\)", cleaned)):
         return "youtube", {"prompt": m.group(1), "url": m.group(2).strip("\"'")}
 
+    if (m := re.search(r"sendNormalMessage\(\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
+        return "normal", {"query": m.group(1)}
+    if (m := re.search(r"sendNormalMessage\(\s*(.+?)\s*\)", cleaned, flags=re.IGNORECASE)):
+        return "normal", {"query": m.group(1).strip("\"'")}
+
     if re.search(r"generateImage\s*\(", cleaned, flags=re.IGNORECASE):
         return "image", {}
 
@@ -57,7 +62,7 @@ async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
     )
     parts = [
         {"text": youtube_prompt},
-        {"fileData": {"mimeType": "text/html", "fileUri": url}},
+        {"file_data": {"mime_type": "text/html", "file_uri": url}},
     ]
     await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=True)
 
@@ -78,5 +83,7 @@ async def agent_route(cid: int, user_text: str, name: str) -> None:
             await execute_image(cid, user_text, name)
         case "texttopdf":
             await execute_text_to_pdf(cid, params.get("prompt", user_text))
+        case "normal":
+            await execute_normal_message(cid, params.get("query", user_text), name)
         case _:
             await execute_normal_message(cid, user_text, name)
