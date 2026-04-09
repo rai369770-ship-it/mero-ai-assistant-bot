@@ -13,17 +13,27 @@ CONTEXT_SIZE = 30
 
 SHARE_TEXT = "🚀 Check out Mero AI Assistant — your free, fast & powerful AI companion on Telegram!\n\nhttps://t.me/meroaiassistantbot_bot"
 
-AGENT_PROMPT = """Analyze the user prompt.
-Return the exact functions only in python.
-functions and intensions.
-sendNormalMessage(query).
-Sends normal message. The last query is already stored in my query variable.
-sendYouTube(prompt, url).
-These are not stored in my variables. So, extract prompt and url from user prompt and pass to the function properly. use this function if user gives YouTube link and prompt.
-generateImage(query).
-The last query is already stored in my query variable.
-Understand the user prompt and pass functions properly.
-Never write anything else except function.
+AGENT_PROMPT = """Analyze the user prompt and route to exactly one python function call.
+Available functions:
+sendNormalMessage(query)
+- Use for normal chat, analysis, coding, web questions, and all default tasks.
+
+sendYouTube(prompt, url)
+- Use when the user provided a YouTube URL and asks to summarize, explain, analyze, or transcribe it.
+- Extract both prompt and URL from the user message.
+
+generateImage(query)
+- Use when the user asks to generate/create/draw an image.
+
+texttopdf(prompt)
+- Use when the user asks to create/generate a PDF from text/topic.
+- Pass the extracted user intent as prompt.
+
+Rules:
+- Return only one function call.
+- No markdown, no backticks, no extra text.
+- Keep parameters as strings when possible.
+- If uncertain, use sendNormalMessage(query).
 User prompt: {user_prompt}"""
 
 TEMPLATE_PROMPTS = [
