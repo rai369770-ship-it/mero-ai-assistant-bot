@@ -16,23 +16,37 @@ def _ordered_keys(preferred_key: Optional[str] = None) -> list[str]:
 
 
 def _normalize_part_keys(part: dict) -> dict:
+    def _compact(data: dict) -> dict:
+        return {k: v for k, v in data.items() if v not in ("", None)}
+
     if "file_data" in part and isinstance(part["file_data"], dict):
         fd = part["file_data"]
-        return {
-            "file_data": {
-                "mime_type": fd.get("mime_type") or fd.get("mimeType", ""),
-                "file_uri": fd.get("file_uri") or fd.get("fileUri", ""),
-            }
-        }
+        normalized = _compact({
+            "mime_type": fd.get("mime_type") or fd.get("mimeType"),
+            "file_uri": fd.get("file_uri") or fd.get("fileUri"),
+        })
+        return {"file_data": normalized} if normalized else {}
     if "fileData" in part and isinstance(part["fileData"], dict):
         fd = part["fileData"]
-        return {"file_data": {"mime_type": fd.get("mimeType", ""), "file_uri": fd.get("fileUri", "")}}
+        normalized = _compact({
+            "mime_type": fd.get("mimeType"),
+            "file_uri": fd.get("fileUri"),
+        })
+        return {"file_data": normalized} if normalized else {}
     if "inline_data" in part and isinstance(part["inline_data"], dict):
         ind = part["inline_data"]
-        return {"inline_data": {"mime_type": ind.get("mime_type") or ind.get("mimeType", ""), "data": ind.get("data", "")}}
+        normalized = _compact({
+            "mime_type": ind.get("mime_type") or ind.get("mimeType"),
+            "data": ind.get("data"),
+        })
+        return {"inline_data": normalized} if normalized else {}
     if "inlineData" in part and isinstance(part["inlineData"], dict):
         ind = part["inlineData"]
-        return {"inline_data": {"mime_type": ind.get("mimeType", ""), "data": ind.get("data", "")}}
+        normalized = _compact({
+            "mime_type": ind.get("mimeType"),
+            "data": ind.get("data"),
+        })
+        return {"inline_data": normalized} if normalized else {}
     if "text" in part:
         return {"text": part.get("text", "")}
     return part
@@ -42,7 +56,9 @@ def _normalize_parts(parts: list) -> list:
     normalized: list = []
     for part in parts:
         if isinstance(part, dict):
-            normalized.append(_normalize_part_keys(part))
+            candidate = _normalize_part_keys(part)
+            if candidate:
+                normalized.append(candidate)
         else:
             normalized.append(part)
     return normalized

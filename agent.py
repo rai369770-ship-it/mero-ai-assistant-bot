@@ -57,14 +57,14 @@ async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
     save_message(cid, "user", f"{prompt} [YouTube: {url}]")
     youtube_prompt = (
         f"{prompt}\n\n"
-        "Analyze the provided YouTube URL. "
-        "If transcript is available, use it. Otherwise analyze from available page context and provide a best-effort summary."
+        "Analyze the provided YouTube video URL directly using video understanding. "
+        "Summarize the actual spoken and visual content when available."
     )
     parts = [
         {"text": youtube_prompt},
-        {"file_data": {"mime_type": "text/html", "file_uri": url}},
+        {"file_data": {"file_uri": url}},
     ]
-    await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=True)
+    await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
 
 
 async def agent_route(cid: int, user_text: str, name: str) -> None:
