@@ -86,9 +86,9 @@ async def send_chat_action(cid: int, action: str = "typing") -> None:
         await client.post(f"{TELEGRAM_API}/sendChatAction", json={"chat_id": cid, "action": action})
 
 
-async def send_document_bytes(cid: int, file_bytes: bytes, filename: str, caption: Optional[str] = None) -> dict:
+async def send_document_bytes(cid: int, file_bytes: bytes, filename: str, caption: Optional[str] = None, mime_type: str = "application/octet-stream") -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        files = {"document": (filename, file_bytes, "text/plain")}
+        files = {"document": (filename, file_bytes, mime_type)}
         data: dict = {"chat_id": str(cid)}
         if caption:
             data["caption"] = caption[:1024]
