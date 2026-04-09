@@ -25,7 +25,7 @@ from settings import (
     btn, url_btn, ikb,
     start_keyboard, template_prompts_keyboard,
     user_settings_keyboard, admin_settings_keyboard,
-    voice_keyboard, model_keyboard, temp_keyboard, photo_keyboard, file_prompt_keyboard,
+    voice_keyboard, model_keyboard, temp_keyboard, photo_keyboard, file_prompt_keyboard, language_name,
     admin_reply_keyboard, admin_user_reply_keyboard, broadcast_reply_keyboard,
     share_keyboard,
 )
@@ -376,17 +376,36 @@ async def webhook(request: Request):
                 current_voice = get_user_voice(cid)
                 await edit_message(
                     cid, mid,
-                    f"🎙️ <b>TTS Voice Selection</b>\n\nCurrent: <code>{current_voice}</code>\n\nSelect a voice:",
+                    f"🎙️ <b>TTS Language Selection</b>\n\nCurrent: <code>{language_name(current_voice)} ({current_voice})</code>\n\nSelect a language:",
                     parse_mode="HTML",
-                    reply_markup=voice_keyboard(),
+                    reply_markup=voice_keyboard(0),
                 )
                 return JSONResponse({"ok": True})
 
-            if cb_data.startswith("voice:"):
+            if cb_data.startswith("lang_page:"):
+                page = int(cb_data.split(":", 1)[1])
+                await answer_callback(cb_id)
+                current_voice = get_user_voice(cid)
+                await edit_message(
+                    cid,
+                    mid,
+                    f"🎙️ <b>TTS Language Selection</b>\n\nCurrent: <code>{language_name(current_voice)} ({current_voice})</code>\n\nSelect a language:",
+                    parse_mode="HTML",
+                    reply_markup=voice_keyboard(page),
+                )
+                return JSONResponse({"ok": True})
+
+            if cb_data.startswith("lang:"):
                 voice_id = cb_data.split(":", 1)[1]
                 set_user_voice(cid, voice_id)
-                await answer_callback(cb_id, f"Voice set: {voice_id}")
-                await edit_message(cid, mid, f"✅ Voice changed to <code>{voice_id}</code>", parse_mode="HTML", reply_markup=ikb([[btn("🔙 Back", "back_settings")]]))
+                await answer_callback(cb_id, f"Language set: {voice_id}")
+                await edit_message(
+                    cid,
+                    mid,
+                    f"✅ TTS language changed to <code>{language_name(voice_id)} ({voice_id})</code>",
+                    parse_mode="HTML",
+                    reply_markup=ikb([[btn("🔙 Back", "back_settings")]]),
+                )
                 return JSONResponse({"ok": True})
 
             if cb_data == "set_model":
@@ -699,7 +718,7 @@ async def webhook(request: Request):
                 f"📖 <b>Summarization</b> — Condense long texts into key points\n"
                 f"🧠 <b>Memory</b> — Mero remembers your conversations for contextual responses\n"
                 f"📋 <b>Custom Instructions</b> — Set system instructions for personalized behavior\n"
-                f"🎙️ <b>Voice Responses</b> — Mero can reply with voice (English available)\n\n"
+                f"🎙️ <b>Voice Responses</b> — Mero can reply with voice in many languages\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n\n"
                 f"Mero is <b>fast, free, and powerful</b>. With its agentic workflow, "
                 f"it understands your intent and routes your requests intelligently.\n\n"

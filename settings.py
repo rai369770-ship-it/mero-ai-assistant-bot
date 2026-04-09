@@ -1,5 +1,6 @@
 import urllib.parse
 from config import TEMPLATE_PROMPTS, SHARE_TEXT
+from languages import LANGUAGES, LANGUAGE_NAME_BY_CODE
 
 
 def btn(text: str, callback_data: str) -> dict:
@@ -32,7 +33,7 @@ def template_prompts_keyboard() -> dict:
 
 def user_settings_keyboard() -> dict:
     return ikb([
-        [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Voice", "set_voice")],
+        [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Language", "set_voice")],
         [btn("🤖 AI Model", "set_model"), btn("🌡️ Temperature", "set_temp")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("💬 Feedback", "feedback_prompt"), btn("📜 History", "history")],
@@ -44,7 +45,7 @@ def user_settings_keyboard() -> dict:
 
 def admin_settings_keyboard() -> dict:
     return ikb([
-        [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Voice", "set_voice")],
+        [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Language", "set_voice")],
         [btn("🤖 AI Model", "set_model"), btn("🌡️ Temperature", "set_temp")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("📊 Total Users", "admin_total"), btn("🚫 Banned Users", "admin_banned")],
@@ -55,18 +56,34 @@ def admin_settings_keyboard() -> dict:
     ])
 
 
-def voice_keyboard() -> dict:
-    return ikb([
-        [btn("🇺🇸 US Female 1", "voice:en_us_001"), btn("🇺🇸 US Male 1", "voice:en_us_006")],
-        [btn("🇺🇸 US Female 2", "voice:en_us_002"), btn("🇺🇸 US Male 2", "voice:en_us_007")],
-        [btn("🇺🇸 US Male 3", "voice:en_us_009"), btn("🇺🇸 US Male 4", "voice:en_us_010")],
-        [btn("🇬🇧 UK Male 1", "voice:en_uk_001"), btn("🇬🇧 UK Male 2", "voice:en_uk_003")],
-        [btn("🇦🇺 AU Female", "voice:en_au_001"), btn("🇦🇺 AU Male", "voice:en_au_002")],
-        [btn("😊 Emotional Female", "voice:en_female_emotional"), btn("🎵 Singing Female", "voice:en_female_ht_f08_wonderful_world")],
-        [btn("👻 Ghostface", "voice:en_us_ghostface"), btn("🚀 Rocket", "voice:en_us_rocket")],
-        [btn("🤖 C3PO", "voice:en_us_c3po"), btn("🧙 Wizard", "voice:en_male_wizard")],
-        [btn("🔙 Back", "back_settings")],
-    ])
+def language_name(code: str) -> str:
+    return LANGUAGE_NAME_BY_CODE.get(code, code)
+
+
+def voice_keyboard(page: int = 0, per_page: int = 20) -> dict:
+    total = len(LANGUAGES)
+    last_page = max(0, (total - 1) // per_page)
+    page = min(max(page, 0), last_page)
+    start = page * per_page
+    items = LANGUAGES[start:start + per_page]
+    rows: list[list[dict]] = []
+
+    for i in range(0, len(items), 2):
+        row = [btn(f"{items[i][0]} ({items[i][1]})", f"lang:{items[i][1]}")]
+        if i + 1 < len(items):
+            row.append(btn(f"{items[i + 1][0]} ({items[i + 1][1]})", f"lang:{items[i + 1][1]}"))
+        rows.append(row)
+
+    nav: list[dict] = []
+    if page > 0:
+        nav.append(btn("⬅️ Prev", f"lang_page:{page - 1}"))
+    if page < last_page:
+        nav.append(btn("Next ➡️", f"lang_page:{page + 1}"))
+    if nav:
+        rows.append(nav)
+
+    rows.append([btn("🔙 Back", "back_settings")])
+    return ikb(rows)
 
 
 def model_keyboard() -> dict:

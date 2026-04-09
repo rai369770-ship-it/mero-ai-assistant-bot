@@ -51,26 +51,30 @@ def _normalize_color(value: str | None) -> str:
 
 def _extract_blocks(page_text: str) -> list[ContentBlock]:
     blocks: list[ContentBlock] = []
-
-    for text in re.findall(r"<text>(.*?)</text>", page_text, flags=re.IGNORECASE | re.DOTALL):
-        cleaned = text.strip()
-        if cleaned:
-            blocks.append(ContentBlock(type="text", text=cleaned))
-
-    for para in re.findall(r"<paragraph>(.*?)</paragraph>", page_text, flags=re.IGNORECASE | re.DOTALL):
-        cleaned = para.strip()
-        if cleaned:
-            blocks.append(ContentBlock(type="paragraph", text=cleaned))
-
-    color_pattern = re.compile(
-        r"<color(?:\\s+name=\"([^\"]+)\"|\\s+value=\"([^\"]+)\"|\\s+code=\"([^\"]+)\")?>(.*?)</color>",
+    tag_pattern = re.compile(
+        r"<(?P<tag>text|paragraph|color)(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>",
         flags=re.IGNORECASE | re.DOTALL,
     )
-    for match in color_pattern.findall(page_text):
-        color_value = match[0] or match[1] or match[2] or "black"
-        text = match[3].strip()
-        if text:
-            blocks.append(ContentBlock(type="color", text=text, color=_normalize_color(color_value)))
+    for match in tag_pattern.finditer(page_text):
+        tag = match.group("tag").strip().lower()
+        body = match.group("body").strip()
+        if not body:
+            continue
+        if tag == "text":
+            blocks.append(ContentBlock(type="text", text=body))
+            continue
+        if tag == "paragraph":
+            blocks.append(ContentBlock(type="paragraph", text=body))
+            continue
+
+        attrs = match.group("attrs") or ""
+        color_match = re.search(
+            r'(?:name|value|code)\s*=\s*["\']([^"\']+)["\']',
+            attrs,
+            flags=re.IGNORECASE,
+        )
+        color_value = color_match.group(1) if color_match else "black"
+        blocks.append(ContentBlock(type="color", text=body, color=_normalize_color(color_value)))
 
     if not blocks:
         stripped = re.sub(r"<[^>]+>", "", page_text).strip()

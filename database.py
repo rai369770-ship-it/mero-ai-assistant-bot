@@ -119,7 +119,7 @@ def clear_file_data(cid: int) -> None:
 
 
 def get_user_voice(cid: int) -> str:
-    return r.get(f"settings:{cid}:voice") or "en_us_001"
+    return r.get(f"settings:{cid}:voice") or "en"
 
 
 def set_user_voice(cid: int, voice: str) -> None:
