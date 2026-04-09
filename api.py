@@ -16,12 +16,25 @@ def _ordered_keys(preferred_key: Optional[str] = None) -> list[str]:
 
 
 def _normalize_part_keys(part: dict) -> dict:
+    if "file_data" in part and isinstance(part["file_data"], dict):
+        fd = part["file_data"]
+        return {
+            "file_data": {
+                "mime_type": fd.get("mime_type") or fd.get("mimeType", ""),
+                "file_uri": fd.get("file_uri") or fd.get("fileUri", ""),
+            }
+        }
     if "fileData" in part and isinstance(part["fileData"], dict):
         fd = part["fileData"]
         return {"file_data": {"mime_type": fd.get("mimeType", ""), "file_uri": fd.get("fileUri", "")}}
+    if "inline_data" in part and isinstance(part["inline_data"], dict):
+        ind = part["inline_data"]
+        return {"inline_data": {"mime_type": ind.get("mime_type") or ind.get("mimeType", ""), "data": ind.get("data", "")}}
     if "inlineData" in part and isinstance(part["inlineData"], dict):
         ind = part["inlineData"]
         return {"inline_data": {"mime_type": ind.get("mimeType", ""), "data": ind.get("data", "")}}
+    if "text" in part:
+        return {"text": part.get("text", "")}
     return part
 
 
