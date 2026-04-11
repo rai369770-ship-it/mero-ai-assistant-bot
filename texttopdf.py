@@ -52,30 +52,28 @@ def _normalize_color(value: str | None) -> str:
 
 def _extract_blocks(page_text: str) -> list[ContentBlock]:
     blocks: list[ContentBlock] = []
-    tag_pattern = re.compile(
-        r"<(?P<tag>text|paragraph|color)(?P<attrs>[^>]*)>(?P<body>.*?)</(?P=tag)>",
+    color_variants = re.compile(
+        r"<color(?P<attrs>[^>]*)>(?P<body>.*?)</color>|<color\s*=\s*[\"']?(?P<eq>[#a-zA-Z0-9]+)[\"']?>(?P<body2>.*?)</color>",
         flags=re.IGNORECASE | re.DOTALL,
     )
-    for match in tag_pattern.finditer(page_text):
-        tag = match.group("tag").strip().lower()
-        body = match.group("body").strip()
+
+    def _parse_color(attrs: str, fallback: str = "black") -> str:
+        color_match = re.search(r'(?:name|value|code|color)\s*=\s*[\"\']?([^\"\'\s>]+)', attrs or "", flags=re.IGNORECASE)
+        return _normalize_color(color_match.group(1) if color_match else fallback)
+
+    for match in color_variants.finditer(page_text):
+        body = (match.group("body") or match.group("body2") or "").strip()
         if not body:
             continue
-        if tag == "text":
-            blocks.append(ContentBlock(type="text", text=body))
-            continue
-        if tag == "paragraph":
-            blocks.append(ContentBlock(type="paragraph", text=body))
-            continue
+        color_value = _parse_color(match.group("attrs") or "", match.group("eq") or "black")
+        blocks.append(ContentBlock(type="color", text=body, color=color_value))
 
-        attrs = match.group("attrs") or ""
-        color_match = re.search(
-            r'(?:name|value|code)\s*=\s*["\']([^"\']+)["\']',
-            attrs,
-            flags=re.IGNORECASE,
-        )
-        color_value = color_match.group(1) if color_match else "black"
-        blocks.append(ContentBlock(type="color", text=body, color=_normalize_color(color_value)))
+    for tag in ("text", "paragraph"):
+        tag_pattern = re.compile(rf"<{tag}[^>]*>(.*?)</{tag}>", flags=re.IGNORECASE | re.DOTALL)
+        for match in tag_pattern.finditer(page_text):
+            body = match.group(1).strip()
+            if body:
+                blocks.append(ContentBlock(type=tag, text=body))
 
     if not blocks:
         stripped = re.sub(r"<[^>]+>", "", page_text).strip()
@@ -182,15 +180,14 @@ async def execute_text_to_pdf(cid: int, prompt: str) -> None:
     await send_message(cid, "📄 Creating your PDF document...")
 
     system_text = (
-        "If the user asks you about generating pdf from text, return texttopdf function with (prompt) parameter. "
-        "with the following prompt. \n"
-        '"Create text content to generate a pdf on ..... topic. Search the web and add requested pages. '
-        "Return clean XML-like markup in this style:\n"
+        "Create PDF-ready content as clean XML-like markup. "
+        "Return clean markup in this style:\n"
         "<page>\n<text>text</text>\n</page>\n<page>\n</page>\n"
         "Use only these tags: <page>, <text>, <paragraph>, <color>. "
+        "For colored text always use one of these valid forms: "
+        "<color name=\"red\">...</color> OR <color color=\"#3366cc\">...</color> OR <color=#3366cc>...</color>. "
         "Never return markdown fences, JSON, escaped tags, or explanations. "
-        "Only return the content for pdf. "
-        "Only return asked functions with specified parameter."
+        "Only return page markup."
     )
     user_prompt = (
         "Create text content to generate a PDF. "

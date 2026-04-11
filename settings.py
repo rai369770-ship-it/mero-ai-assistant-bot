@@ -34,7 +34,8 @@ def template_prompts_keyboard() -> dict:
 def user_settings_keyboard() -> dict:
     return ikb([
         [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Language", "set_voice")],
-        [btn("🤖 AI Model", "set_model"), btn("🌡️ Temperature", "set_temp")],
+        [btn("🌡️ Temperature", "set_temp")],
+        [btn("🧰 Tools", "open_tools")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("💬 Feedback", "feedback_prompt"), btn("📜 History", "history")],
         [btn("🔄 Export Chat", "export_chat")],
@@ -46,7 +47,8 @@ def user_settings_keyboard() -> dict:
 def admin_settings_keyboard() -> dict:
     return ikb([
         [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Language", "set_voice")],
-        [btn("🤖 AI Model", "set_model"), btn("🌡️ Temperature", "set_temp")],
+        [btn("🌡️ Temperature", "set_temp")],
+        [btn("🧰 Tools", "open_tools")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("📊 Total Users", "admin_total"), btn("🚫 Banned Users", "admin_banned")],
         [btn("📢 Broadcast", "admin_broadcast")],
@@ -86,13 +88,6 @@ def voice_keyboard(page: int = 0, per_page: int = 20) -> dict:
     return ikb(rows)
 
 
-def model_keyboard() -> dict:
-    return ikb([
-        [btn("⚡ Mero Lite", "model:lite"), btn("🚀 Mero Pro", "model:pro")],
-        [btn("🔙 Back", "back_settings")],
-    ])
-
-
 def temp_keyboard() -> dict:
     return ikb([
         [btn("🧊 0.0 Precise", "temp:0.0"), btn("❄️ 0.3 Balanced", "temp:0.3")],
@@ -126,6 +121,16 @@ def admin_user_reply_keyboard(target: int, username: str = "User") -> dict:
 def broadcast_reply_keyboard() -> dict:
     return ikb([[btn("💬 Reply to Admin", "feedback_prompt")]])
 
+
+
+def tools_keyboard() -> dict:
+    return ikb([
+        [btn("✨ Text refiner", "tool:text_refiner")],
+        [btn("🌐 Text translator", "tool:text_translator")],
+        [btn("📊 Text analyzer", "tool:text_analyzer")],
+        [btn("📄 PDF creator", "tool:pdf_creator")],
+        [btn("❌ Close", "tools_close")],
+    ])
 
 def share_keyboard() -> dict:
     return ikb([

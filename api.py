@@ -1,11 +1,15 @@
 import json
 import httpx
 from typing import Optional
+
 from config import CONTEXT_SIZE
 from api_keys import fetch_api_keys, get_keys
-from database import get_recent_history, save_message, get_user_model
+from database import get_recent_history, save_message
 from markdown_parse import markdown_to_html, escape_html
 from message import send_message
+
+DEFAULT_MODEL = "gemini-2.5-flash"
+MAX_OUTPUT_TOKENS = 32768
 
 
 def _ordered_keys(preferred_key: Optional[str] = None) -> list[str]:
@@ -88,13 +92,13 @@ def build_body(history_messages: list[dict], current_parts: list, system_text: s
     for msg in history_messages:
         contents.append({
             "role": "user" if msg["role"] == "user" else "model",
-            "parts": [{"text": msg.get("text", "")}]
+            "parts": [{"text": msg.get("text", "")}],
         })
     contents.append({"role": "user", "parts": _normalize_parts(current_parts)})
     body: dict = {
         "system_instruction": {"parts": [{"text": system_text}]},
         "contents": contents,
-        "generationConfig": {"maxOutputTokens": 8192},
+        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS},
     }
     if use_tools:
         body["tools"] = [{"google_search": {}}, {"url_context": {}}]
@@ -137,13 +141,13 @@ def format_response_with_sources(ai_text: str, sources: list[dict]) -> str:
     return html
 
 
-async def call_gemini_raw(parts: list, system_text: str, model: str = "gemini-2.5-flash-lite", preferred_key: Optional[str] = None) -> Optional[str]:
+async def call_gemini_raw(parts: list, system_text: str, model: str = DEFAULT_MODEL, preferred_key: Optional[str] = None) -> Optional[str]:
     if not await fetch_api_keys():
         return None
     body = {
         "system_instruction": {"parts": [{"text": system_text}]},
         "contents": [{"role": "user", "parts": _normalize_parts(parts)}],
-        "generationConfig": {"maxOutputTokens": 8192},
+        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS},
     }
     content, _ = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
     if not content:
@@ -160,8 +164,7 @@ async def handle_gemini(cid: int, current_parts: list, system_text: str, use_too
         save_message(cid, "model", msg)
         await send_message(cid, msg)
         return None
-    model = get_user_model(cid)
-    content, err = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
+    content, err = await try_api_call(json.dumps(body), DEFAULT_MODEL, preferred_key=preferred_key)
     if content:
         ai_text, sources = extract_ai_text(content)
         save_message(cid, "model", ai_text)
