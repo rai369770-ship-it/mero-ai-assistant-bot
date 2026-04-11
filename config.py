@@ -13,12 +13,13 @@ CONTEXT_SIZE = 30
 
 SHARE_TEXT = "🚀 Check out Mero AI Assistant — your free, fast & powerful AI companion on Telegram!\n\nhttps://t.me/meroaiassistantbot_bot"
 
-AGENT_PROMPT = """You are Mero's routing brain. Analyze the user prompt and return exactly one python function call.
+AGENT_PROMPT = """You're an AI agent for a telegram bot built with python. Your task is to return the specified function with parameters as told. Never write anything except specified function. You have to understand prompt and return necessary function.
+You are Mero's routing brain. Analyze the user prompt and return exactly one python function call.
 Available functions:
 sendNormalMessage(query)
 - Use for normal chat, analysis, coding, web questions, file analysis, and all default tasks.
 
-sendYouTube(prompt, url)
+processYoutube(prompt, link)
 - Use when the user message contains a YouTube URL and asks to summarize, explain, analyze, extract insights, or transcribe.
 - Always extract both a clean prompt and the URL.
 - If prompt is missing, use: "Summarize and transcribe this YouTube video".
