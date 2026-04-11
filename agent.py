@@ -9,16 +9,28 @@ from settings import ikb, btn
 from config import AGENT_PROMPT
 
 
+def processYoutube(prompt: str, link: str) -> dict:
+    return {"prompt": (prompt or "").strip() or "Summarize and transcribe this YouTube video", "url": (link or "").strip()}
+
+
 def parse_agent_response(response: str) -> tuple[str, dict]:
     cleaned = re.sub(r"```python\s*", "", response)
     cleaned = re.sub(r"```\s*", "", cleaned).strip()
 
-    if (m := re.search(r"sendYouTube\(\s*[\"'](.+?)[\"']\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned)):
-        return "youtube", {"prompt": m.group(1), "url": m.group(2)}
-    if (m := re.search(r"sendYouTube\(\s*(.+?)\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned)):
-        return "youtube", {"prompt": m.group(1).strip("\"'"), "url": m.group(2)}
-    if (m := re.search(r"sendYouTube\(\s*[\"'](.+?)[\"']\s*,\s*(.+?)\s*\)", cleaned)):
-        return "youtube", {"prompt": m.group(1), "url": m.group(2).strip("\"'")}
+    if (m := re.search(r"processYoutube\(\s*[\"'](.+?)[\"']\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
+        return "youtube", processYoutube(m.group(1), m.group(2))
+    if (m := re.search(r"processYoutube\(\s*(.+?)\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
+        return "youtube", processYoutube(m.group(1).strip("\"'"), m.group(2))
+    if (m := re.search(r"processYoutube\(\s*[\"'](.+?)[\"']\s*,\s*(.+?)\s*\)", cleaned, flags=re.IGNORECASE)):
+        return "youtube", processYoutube(m.group(1), m.group(2).strip("\"'"))
+
+    # Backward compatibility for older router prompts.
+    if (m := re.search(r"sendYouTube\(\s*[\"'](.+?)[\"']\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
+        return "youtube", processYoutube(m.group(1), m.group(2))
+    if (m := re.search(r"sendYouTube\(\s*(.+?)\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
+        return "youtube", processYoutube(m.group(1).strip("\"'"), m.group(2))
+    if (m := re.search(r"sendYouTube\(\s*[\"'](.+?)[\"']\s*,\s*(.+?)\s*\)", cleaned, flags=re.IGNORECASE)):
+        return "youtube", processYoutube(m.group(1), m.group(2).strip("\"'"))
 
     if (m := re.search(r"sendNormalMessage\(\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
         return "normal", {"query": m.group(1)}
@@ -64,14 +76,20 @@ async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
         "If exact details are unavailable, clearly state limitations and still provide best-effort analysis."
     )
     parts = [
-        {"text": youtube_prompt},
         {"file_data": {"mime_type": "video/*", "file_uri": url}},
+        {"text": youtube_prompt},
     ]
     await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
 
 
 async def agent_route(cid: int, user_text: str, name: str) -> None:
-    agent_system = "You are a function router. Only output a single python function call. No explanation."
+    agent_system = (
+        "You're an AI agent for a telegram bot built with python. "
+        "Your task is to return the specified function with parameters as told. "
+        "Never write anything except specified function. "
+        "You have to understand prompt and return necessary function. "
+        "You are a function router. Only output a single python function call. No explanation."
+    )
     prompt = AGENT_PROMPT.format(user_prompt=user_text)
     agent_response = await call_gemini_raw([{"text": prompt}], agent_system)
     if not agent_response:

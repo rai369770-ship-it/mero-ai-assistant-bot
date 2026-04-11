@@ -232,9 +232,10 @@ async def webhook(request: Request):
                 return JSONResponse({"ok": True})
 
             if cb_data == "tools_close":
-                await answer_callback(cb_id, "Closed")
+                await answer_callback(cb_id, "Back to tools")
                 clear_state(cid)
-                await send_message(cid, "✅ Tools closed.")
+                set_state(cid, "tool:menu")
+                await open_tools_menu(cid)
                 return JSONResponse({"ok": True})
 
             if cb_data == "tools_cancel":
