@@ -56,13 +56,16 @@ async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
     await send_message(cid, "🎬 Processing YouTube link...", reply_markup=ikb([[btn("⏳ Please wait...", "noop")]]))
     save_message(cid, "user", f"{prompt} [YouTube: {url}]")
     youtube_prompt = (
-        f"{prompt}\n\n"
-        "Analyze the provided YouTube video URL directly using video understanding. "
-        "Summarize the actual spoken and visual content when available."
+        f"Task: {prompt}\n"
+        f"YouTube URL: {url}\n\n"
+        "Use Gemini video understanding for this YouTube URL. "
+        "If transcript/audio is available, summarize spoken content with timestamps. "
+        "Also summarize key visual events. "
+        "If exact details are unavailable, clearly state limitations and still provide best-effort analysis."
     )
     parts = [
         {"text": youtube_prompt},
-        {"file_data": {"file_uri": url}},
+        {"file_data": {"mime_type": "video/*", "file_uri": url}},
     ]
     await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
 

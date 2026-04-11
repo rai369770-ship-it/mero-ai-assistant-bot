@@ -11,7 +11,6 @@ from database import (
     save_file_data, get_file_data, clear_file_data,
     get_user_voice, set_user_voice, get_user_system, set_user_system,
     clear_user_system, get_user_temp, set_user_temp,
-    get_user_model, set_user_model,
     get_credit_message, set_credit_message,
     ensure_user, is_admin, check_banned,
 )
@@ -25,7 +24,7 @@ from settings import (
     btn, url_btn, ikb,
     start_keyboard, template_prompts_keyboard,
     user_settings_keyboard, admin_settings_keyboard,
-    voice_keyboard, model_keyboard, temp_keyboard, photo_keyboard, file_prompt_keyboard, language_name,
+    voice_keyboard, temp_keyboard, photo_keyboard, file_prompt_keyboard, language_name,
     admin_reply_keyboard, admin_user_reply_keyboard, broadcast_reply_keyboard,
     share_keyboard,
 )
@@ -38,6 +37,18 @@ from voice_message import handle_voice
 from attachment import (
     handle_photo, handle_document, handle_audio,
     handle_video, handle_animation, handle_sticker,
+)
+
+from tools import (
+    open_tools_menu,
+    run_text_refiner,
+    run_text_translator,
+    run_pdf_creator,
+    run_text_analyzer,
+    parse_text_document_bytes,
+    resolve_language,
+    TOOL_CANCEL,
+    MAX_TOOL_TEXT_FILE_BYTES,
 )
 
 import urllib.parse
@@ -59,16 +70,26 @@ async def send_banned_message(cid: int) -> None:
     )
 
 
-def model_label(model_key: str) -> str:
-    return "Mero Pro" if model_key == "gemini-2.5-flash" else "Mero Lite"
-
-
-def resolve_model(selection: str) -> str:
-    return "gemini-2.5-flash" if selection == "pro" else "gemini-2.5-flash-lite"
-
-
 def get_username(uid: int) -> str:
     return get_all_users().get(str(uid), str(uid))
+
+
+def _set_broadcast_failed(admin_id: int, user_ids: list[int]) -> None:
+    set_state(admin_id, "broadcast_failed:" + ",".join(str(i) for i in user_ids))
+
+
+def _get_broadcast_failed(admin_id: int) -> list[int]:
+    st = get_state(admin_id) or ""
+    if not st.startswith("broadcast_failed:"):
+        return []
+    raw = st.split(":", 1)[1].strip()
+    if not raw:
+        return []
+    return [int(x) for x in raw.split(",") if x.strip().lstrip("-").isdigit()]
+
+
+def _in_tool(st: str | None) -> bool:
+    return bool(st and st.startswith("tool:"))
 
 
 async def send_feedback_to_admins(sender_id: int, sender_name: str, text: str) -> None:
@@ -102,9 +123,10 @@ async def relay_voice_reply(sender_id: int, sender_name: str, target_id: int, vo
     return True
 
 
-async def run_broadcast(admin_id: int, text: str | None = None, voice_data: bytes | None = None, voice_mime: str = "audio/ogg") -> None:
+async def run_broadcast(admin_id: int, text: str | None = None, voice_data: bytes | None = None, voice_mime: str = "audio/ogg") -> list[int]:
     users = get_all_users()
     success, fail = 0, 0
+    failed_ids: list[int] = []
     for uid in users:
         target = int(uid)
         try:
@@ -122,14 +144,21 @@ async def run_broadcast(admin_id: int, text: str | None = None, voice_data: byte
                 success += 1
             else:
                 fail += 1
+                failed_ids.append(target)
         except Exception:
             fail += 1
-    await send_message(admin_id, f"📢 Broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}")
+            failed_ids.append(target)
+    if failed_ids:
+        await send_message(admin_id, f"📢 Broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}", reply_markup=ikb([[btn("🧹 Clear failed users", f"broadcast_clear_failed:{admin_id}")]]))
+    else:
+        await send_message(admin_id, f"📢 Broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}")
+    return failed_ids
 
 
-async def run_broadcast_copy(admin_id: int, source_chat_id: int, source_message_id: int) -> None:
+async def run_broadcast_copy(admin_id: int, source_chat_id: int, source_message_id: int) -> list[int]:
     users = get_all_users()
     success, fail = 0, 0
+    failed_ids: list[int] = []
     for uid in users:
         target = int(uid)
         try:
@@ -143,9 +172,15 @@ async def run_broadcast_copy(admin_id: int, source_chat_id: int, source_message_
                 success += 1
             else:
                 fail += 1
+                failed_ids.append(target)
         except Exception:
             fail += 1
-    await send_message(admin_id, f"📢 Attachment broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}")
+            failed_ids.append(target)
+    if failed_ids:
+        await send_message(admin_id, f"📢 Attachment broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}", reply_markup=ikb([[btn("🧹 Clear failed users", f"broadcast_clear_failed:{admin_id}")]]))
+    else:
+        await send_message(admin_id, f"📢 Attachment broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}")
+    return failed_ids
 
 
 @app.get("/")
@@ -188,6 +223,42 @@ async def webhook(request: Request):
                 await answer_callback(cb_id)
                 kb = admin_settings_keyboard() if is_admin(cid) else user_settings_keyboard()
                 await send_message(cid, "⚙️ <b>Settings</b>", parse_mode="HTML", reply_markup=kb)
+                return JSONResponse({"ok": True})
+
+            if cb_data == "open_tools":
+                await answer_callback(cb_id)
+                set_state(cid, "tool:menu")
+                await open_tools_menu(cid)
+                return JSONResponse({"ok": True})
+
+            if cb_data == "tools_close":
+                await answer_callback(cb_id, "Closed")
+                clear_state(cid)
+                await send_message(cid, "✅ Tools closed.")
+                return JSONResponse({"ok": True})
+
+            if cb_data == "tools_cancel":
+                await answer_callback(cb_id, "Cancelled")
+                clear_state(cid)
+                set_state(cid, "tool:menu")
+                await open_tools_menu(cid)
+                return JSONResponse({"ok": True})
+
+            if cb_data.startswith("tool:"):
+                await answer_callback(cb_id)
+                tool_name = cb_data.split(":", 1)[1]
+                if tool_name == "text_refiner":
+                    set_state(cid, "tool:text_refiner")
+                    await send_message(cid, "Write or upload your text. You can upload (.txt) file upto 30 kb to refine.", reply_markup=TOOL_CANCEL)
+                elif tool_name == "text_translator":
+                    set_state(cid, "tool:text_translator:text")
+                    await send_message(cid, "Send or upload your text to translate. You can upload .txt file to translate.", reply_markup=TOOL_CANCEL)
+                elif tool_name == "pdf_creator":
+                    set_state(cid, "tool:pdf_creator")
+                    await send_message(cid, "Write a topic or subject to create a pdf with AI.", reply_markup=TOOL_CANCEL)
+                elif tool_name == "text_analyzer":
+                    set_state(cid, "tool:text_analyzer")
+                    await send_message(cid, "Write or upload your .txt to analyze.", reply_markup=TOOL_CANCEL)
                 return JSONResponse({"ok": True})
 
             if cb_data == "request_unban":
@@ -429,25 +500,6 @@ async def webhook(request: Request):
                 )
                 return JSONResponse({"ok": True})
 
-            if cb_data == "set_model":
-                await answer_callback(cb_id)
-                current_model = get_user_model(cid)
-                await edit_message(
-                    cid, mid,
-                    f"🤖 <b>AI Model</b>\n\nCurrent: <code>{escape_html(model_label(current_model))}</code>\n\nChoose model:",
-                    parse_mode="HTML",
-                    reply_markup=model_keyboard(),
-                )
-                return JSONResponse({"ok": True})
-
-            if cb_data.startswith("model:"):
-                selected = cb_data.split(":", 1)[1]
-                model_key = resolve_model(selected)
-                set_user_model(cid, model_key)
-                await answer_callback(cb_id, f"Model: {model_label(model_key)}")
-                await edit_message(cid, mid, f"✅ Model set to <code>{escape_html(model_label(model_key))}</code>", parse_mode="HTML", reply_markup=ikb([[btn("🔙 Back", "back_settings")]]))
-                return JSONResponse({"ok": True})
-
             if cb_data == "set_temp":
                 await answer_callback(cb_id)
                 current_temp = get_user_temp(cid)
@@ -563,6 +615,21 @@ async def webhook(request: Request):
                 await send_message(cid, "📢 Send your broadcast as text, voice, photo, document, audio, video, animation, or sticker.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
                 return JSONResponse({"ok": True})
 
+            if cb_data.startswith("broadcast_clear_failed:"):
+                if not is_admin(cid):
+                    await answer_callback(cb_id, "Unauthorized")
+                    return JSONResponse({"ok": True})
+                await answer_callback(cb_id)
+                failed_users = _get_broadcast_failed(cid)
+                if not failed_users:
+                    await send_message(cid, "✅ No failed users stored.")
+                    return JSONResponse({"ok": True})
+                for uid in failed_users:
+                    remove_all_user_data(uid)
+                clear_state(cid)
+                await send_message(cid, f"🧹 Cleared data for {len(failed_users)} failed users.")
+                return JSONResponse({"ok": True})
+
             return JSONResponse({"ok": True})
 
         if "message" not in data:
@@ -579,7 +646,9 @@ async def webhook(request: Request):
         st = get_state(cid)
         if st == "awaiting_broadcast" and is_admin(cid) and "text" not in message:
             clear_state(cid)
-            await run_broadcast_copy(cid, cid, message["message_id"])
+            failed_ids = await run_broadcast_copy(cid, cid, message["message_id"])
+            if failed_ids:
+                _set_broadcast_failed(cid, failed_ids)
             return JSONResponse({"ok": True})
 
         if st and "text" in message:
@@ -603,7 +672,9 @@ async def webhook(request: Request):
                     clear_state(cid)
                     if not is_admin(cid):
                         return JSONResponse({"ok": True})
-                    await run_broadcast(cid, text=text)
+                    failed_ids = await run_broadcast(cid, text=text)
+                    if failed_ids:
+                        _set_broadcast_failed(cid, failed_ids)
                     return JSONResponse({"ok": True})
 
                 if st == "awaiting_credit_message":
@@ -613,6 +684,30 @@ async def webhook(request: Request):
                     set_credit_message(text)
                     await send_message(cid, "✅ Developer and credits message updated.", reply_markup=ikb([[btn("🔙 Back", "back_settings")]]))
                     return JSONResponse({"ok": True})
+
+                if st.startswith("tool:"):
+                    if st == "tool:text_refiner":
+                        await run_text_refiner(cid, text)
+                        return JSONResponse({"ok": True})
+                    if st == "tool:text_translator:text":
+                        set_state(cid, f"tool:text_translator:lang:{text}")
+                        await send_message(cid, "Send your target language for translation function.", reply_markup=TOOL_CANCEL)
+                        return JSONResponse({"ok": True})
+                    if st.startswith("tool:text_translator:lang:"):
+                        source_text = st.split(":", 3)[3]
+                        lang_code, lang_name = resolve_language(text)
+                        if not lang_code or not lang_name:
+                            await send_message(cid, "❌ Invalid language. Send a valid language code or name.", reply_markup=TOOL_CANCEL)
+                            return JSONResponse({"ok": True})
+                        set_state(cid, "tool:text_translator:text")
+                        await run_text_translator(cid, source_text, lang_code, lang_name)
+                        return JSONResponse({"ok": True})
+                    if st == "tool:pdf_creator":
+                        await run_pdf_creator(cid, text)
+                        return JSONResponse({"ok": True})
+                    if st == "tool:text_analyzer":
+                        await run_text_analyzer(cid, text)
+                        return JSONResponse({"ok": True})
 
                 if st.startswith("awaiting_file_prompt:"):
                     clear_state(cid)
@@ -634,6 +729,36 @@ async def webhook(request: Request):
                         use_tools=False,
                     )
                     return JSONResponse({"ok": True})
+
+        if st and message.get("document") and st.startswith("tool:"):
+            doc = message["document"]
+            file_name = (doc.get("file_name") or "").lower()
+            if not file_name.endswith(".txt"):
+                await send_message(cid, "❌ Please upload a .txt file.", reply_markup=TOOL_CANCEL)
+                return JSONResponse({"ok": True})
+            file_bytes = await download_telegram_file(doc["file_id"])
+            if not file_bytes:
+                await send_message(cid, "❌ Failed to download .txt file.", reply_markup=TOOL_CANCEL)
+                return JSONResponse({"ok": True})
+            limit = None if st == "tool:text_analyzer" else MAX_TOOL_TEXT_FILE_BYTES
+            tool_text, error = parse_text_document_bytes(file_bytes, limit_bytes=limit)
+            if error:
+                await send_message(cid, error, reply_markup=TOOL_CANCEL)
+                return JSONResponse({"ok": True})
+            if not tool_text:
+                await send_message(cid, "❌ Could not read text from this file.", reply_markup=TOOL_CANCEL)
+                return JSONResponse({"ok": True})
+
+            if st == "tool:text_refiner":
+                await run_text_refiner(cid, tool_text)
+                return JSONResponse({"ok": True})
+            if st == "tool:text_translator:text":
+                set_state(cid, f"tool:text_translator:lang:{tool_text}")
+                await send_message(cid, "Send your target language for translation function.", reply_markup=TOOL_CANCEL)
+                return JSONResponse({"ok": True})
+            if st == "tool:text_analyzer":
+                await run_text_analyzer(cid, tool_text)
+                return JSONResponse({"ok": True})
 
         reply_target = get_reply_state(cid)
         if reply_target is not None and message.get("voice"):
@@ -780,6 +905,12 @@ async def webhook(request: Request):
             await send_message(cid, "⚙️ <b>Settings</b>", parse_mode="HTML", reply_markup=kb)
             return JSONResponse({"ok": True})
 
+        if text == "/tools":
+            ensure_user(cid, name)
+            set_state(cid, "tool:menu")
+            await open_tools_menu(cid)
+            return JSONResponse({"ok": True})
+
         if text == "/clear":
             ensure_user(cid, name)
             clear_history(cid)
@@ -856,23 +987,9 @@ async def webhook(request: Request):
             if not broadcast_msg:
                 await send_message(cid, "Provide a message after /broadcast.")
                 return JSONResponse({"ok": True})
-            users = get_all_users()
-            success, fail = 0, 0
-            for uid in users:
-                try:
-                    result = await send_message(
-                        int(uid),
-                        f"📢 <b>Broadcast:</b>\n\n{escape_html(broadcast_msg)}",
-                        parse_mode="HTML",
-                        reply_markup=broadcast_reply_keyboard(),
-                    )
-                    if result and result.get("ok"):
-                        success += 1
-                    else:
-                        fail += 1
-                except Exception:
-                    fail += 1
-            await send_message(cid, f"📢 Done.\n✅ Sent: {success}\n❌ Failed: {fail}")
+            failed_ids = await run_broadcast(cid, text=broadcast_msg)
+            if failed_ids:
+                _set_broadcast_failed(cid, failed_ids)
             return JSONResponse({"ok": True})
 
         if text.startswith("/ban"):
@@ -939,7 +1056,7 @@ async def webhook(request: Request):
                     "/cls — Clear stored attachment\n"
                     "/history — View recent chat history\n"
                     "/clear_system — Remove custom system instructions\n"
-                    "/help — Show admin help\n"
+                    "/tools — Open productivity tools\n/help — Show admin help\n"
                 )
             else:
                 help_text = (
@@ -952,7 +1069,7 @@ async def webhook(request: Request):
                     "/history — View recent chat history\n"
                     "/feedback — Send feedback (text, voice, or attachments)\n"
                     "/clear_system — Remove custom system instructions\n"
-                    "/help — Show this help\n\n"
+                    "/tools — Open productivity tools\n/help — Show this help\n\n"
                     "<b>Supported Inputs</b>\n"
                     "• Text prompts and coding requests\n"
                     "• Documents and code files (HTML, Markdown, PDF, DOCX, XLSX, TXT, etc.)\n"
