@@ -52,6 +52,8 @@ from tools import (
 )
 
 import urllib.parse
+import asyncio
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = FastAPI()
 
@@ -124,30 +126,11 @@ async def relay_voice_reply(sender_id: int, sender_name: str, target_id: int, vo
 
 
 async def run_broadcast(admin_id: int, text: str | None = None, voice_data: bytes | None = None, voice_mime: str = "audio/ogg") -> list[int]:
-    users = get_all_users()
-    success, fail = 0, 0
-    failed_ids: list[int] = []
-    for uid in users:
-        target = int(uid)
-        try:
-            if voice_data is not None:
-                result = await send_voice_bytes(target, voice_data, "📢 Voice broadcast", "broadcast.ogg", voice_mime)
-                await send_message(target, "📢 <b>Voice Broadcast</b>", parse_mode="HTML", reply_markup=broadcast_reply_keyboard())
-            else:
-                result = await send_message(
-                    target,
-                    f"📢 <b>Broadcast:</b>\n\n{escape_html(text or '')}",
-                    parse_mode="HTML",
-                    reply_markup=broadcast_reply_keyboard(),
-                )
-            if result and result.get("ok"):
-                success += 1
-            else:
-                fail += 1
-                failed_ids.append(target)
-        except Exception:
-            fail += 1
-            failed_ids.append(target)
+    users = [int(uid) for uid in get_all_users()]
+    if voice_data is not None:
+        success, fail, failed_ids = _run_parallel_broadcast(users, lambda target: _send_broadcast_voice_sync(target, voice_data, voice_mime))
+    else:
+        success, fail, failed_ids = _run_parallel_broadcast(users, lambda target: _send_broadcast_text_sync(target, text or ""))
     if failed_ids:
         await send_message(admin_id, f"📢 Broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}", reply_markup=ikb([[btn("🧹 Clear failed users", f"broadcast_clear_failed:{admin_id}")]]))
     else:
@@ -156,31 +139,64 @@ async def run_broadcast(admin_id: int, text: str | None = None, voice_data: byte
 
 
 async def run_broadcast_copy(admin_id: int, source_chat_id: int, source_message_id: int) -> list[int]:
-    users = get_all_users()
-    success, fail = 0, 0
-    failed_ids: list[int] = []
-    for uid in users:
-        target = int(uid)
-        try:
-            result = await copy_message(
-                to_chat_id=target,
-                from_chat_id=source_chat_id,
-                message_id=source_message_id,
-                reply_markup=broadcast_reply_keyboard(),
-            )
-            if result and result.get("ok"):
-                success += 1
-            else:
-                fail += 1
-                failed_ids.append(target)
-        except Exception:
-            fail += 1
-            failed_ids.append(target)
+    users = [int(uid) for uid in get_all_users()]
+    success, fail, failed_ids = _run_parallel_broadcast(users, lambda target: _copy_broadcast_message_sync(target, source_chat_id, source_message_id))
     if failed_ids:
         await send_message(admin_id, f"📢 Attachment broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}", reply_markup=ikb([[btn("🧹 Clear failed users", f"broadcast_clear_failed:{admin_id}")]]))
     else:
         await send_message(admin_id, f"📢 Attachment broadcast done.\n✅ Sent: {success}\n❌ Failed: {fail}")
     return failed_ids
+
+
+def _send_broadcast_text_sync(target: int, text: str) -> bool:
+    result = asyncio.run(
+        send_message(
+            target,
+            f"📢 <b>Broadcast:</b>\n\n{escape_html(text)}",
+            parse_mode="HTML",
+            reply_markup=broadcast_reply_keyboard(),
+        )
+    )
+    return bool(result and result.get("ok"))
+
+
+def _send_broadcast_voice_sync(target: int, voice_data: bytes, voice_mime: str) -> bool:
+    voice_result = asyncio.run(send_voice_bytes(target, voice_data, "📢 Voice broadcast", "broadcast.ogg", voice_mime))
+    if not voice_result or not voice_result.get("ok"):
+        return False
+    message_result = asyncio.run(send_message(target, "📢 <b>Voice Broadcast</b>", parse_mode="HTML", reply_markup=broadcast_reply_keyboard()))
+    return bool(message_result and message_result.get("ok"))
+
+
+def _copy_broadcast_message_sync(target: int, source_chat_id: int, source_message_id: int) -> bool:
+    result = asyncio.run(
+        copy_message(
+            to_chat_id=target,
+            from_chat_id=source_chat_id,
+            message_id=source_message_id,
+            reply_markup=broadcast_reply_keyboard(),
+        )
+    )
+    return bool(result and result.get("ok"))
+
+
+def _run_parallel_broadcast(users: list[int], sender) -> tuple[int, int, list[int]]:
+    success, fail = 0, 0
+    failed_ids: list[int] = []
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(sender, target): target for target in users}
+        for future in as_completed(futures):
+            target = futures[future]
+            try:
+                if future.result():
+                    success += 1
+                else:
+                    fail += 1
+                    failed_ids.append(target)
+            except Exception:
+                fail += 1
+                failed_ids.append(target)
+    return success, fail, failed_ids
 
 
 @app.get("/")
@@ -232,10 +248,10 @@ async def webhook(request: Request):
                 return JSONResponse({"ok": True})
 
             if cb_data == "tools_close":
-                await answer_callback(cb_id, "Back to tools")
+                await answer_callback(cb_id, "Tools closed")
                 clear_state(cid)
-                set_state(cid, "tool:menu")
-                await open_tools_menu(cid)
+                await delete_message(cid, mid)
+                await send_message(cid, "🧰 Tools menu closed.")
                 return JSONResponse({"ok": True})
 
             if cb_data == "tools_cancel":
