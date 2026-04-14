@@ -5,7 +5,6 @@ from html import escape, unescape
 from typing import Literal
 
 from pydantic import BaseModel, Field, ValidationError
-from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer
@@ -15,9 +14,8 @@ from message import send_document_bytes, send_message
 
 
 class ContentBlock(BaseModel):
-    type: Literal["text", "paragraph", "color"]
+    type: Literal["text", "paragraph"]
     text: str = Field(min_length=1)
-    color: str | None = None
 
 
 class PdfPage(BaseModel):
@@ -28,45 +26,8 @@ class PdfDocument(BaseModel):
     pages: list[PdfPage] = Field(min_length=1)
 
 
-_COLOR_FALLBACK = {
-    "black": colors.black,
-    "blue": colors.blue,
-    "red": colors.red,
-    "green": colors.green,
-    "orange": colors.orange,
-    "purple": colors.purple,
-    "gray": colors.gray,
-}
-
-
-def _normalize_color(value: str | None) -> str:
-    if not value:
-        return "black"
-    raw = value.strip().lower()
-    if raw in _COLOR_FALLBACK:
-        return raw
-    if re.fullmatch(r"#(?:[0-9a-f]{3}|[0-9a-f]{6})", raw):
-        return raw
-    return "black"
-
-
 def _extract_blocks(page_text: str) -> list[ContentBlock]:
     blocks: list[ContentBlock] = []
-    color_variants = re.compile(
-        r"<color(?P<attrs>[^>]*)>(?P<body>.*?)</color>|<color\s*=\s*[\"']?(?P<eq>[#a-zA-Z0-9]+)[\"']?>(?P<body2>.*?)</color>",
-        flags=re.IGNORECASE | re.DOTALL,
-    )
-
-    def _parse_color(attrs: str, fallback: str = "black") -> str:
-        color_match = re.search(r'(?:name|value|code|color)\s*=\s*[\"\']?([^\"\'\s>]+)', attrs or "", flags=re.IGNORECASE)
-        return _normalize_color(color_match.group(1) if color_match else fallback)
-
-    for match in color_variants.finditer(page_text):
-        body = (match.group("body") or match.group("body2") or "").strip()
-        if not body:
-            continue
-        color_value = _parse_color(match.group("attrs") or "", match.group("eq") or "black")
-        blocks.append(ContentBlock(type="color", text=body, color=color_value))
 
     for tag in ("text", "paragraph"):
         tag_pattern = re.compile(rf"<{tag}[^>]*>(.*?)</{tag}>", flags=re.IGNORECASE | re.DOTALL)
@@ -165,11 +126,6 @@ def render_pdf(doc: PdfDocument) -> bytes:
                 story.append(Spacer(1, 4))
                 continue
 
-            if block.type == "color":
-                color_value = _normalize_color(block.color)
-                story.append(Paragraph(f'<font color="{color_value}">{safe_text}</font>', para_style))
-                continue
-
             story.append(Paragraph(safe_text, para_style))
 
     pdf.build(story)
@@ -183,16 +139,14 @@ async def execute_text_to_pdf(cid: int, prompt: str) -> None:
         "Create PDF-ready content as clean XML-like markup. "
         "Return clean markup in this style:\n"
         "<page>\n<text>text</text>\n</page>\n<page>\n</page>\n"
-        "Use only these tags: <page>, <text>, <paragraph>, <color>. "
-        "For colored text always use one of these valid forms: "
-        "<color name=\"red\">...</color> OR <color color=\"#3366cc\">...</color> OR <color=#3366cc>...</color>. "
+        "Use only these tags: <page>, <text>, <paragraph>. "
         "Never return markdown fences, JSON, escaped tags, or explanations. "
         "Only return page markup."
     )
     user_prompt = (
         "Create text content to generate a PDF. "
         f"Topic request: {prompt}. "
-        "Search the web when needed, and return only <page>...</page> content with <text>, <paragraph>, and <color>."
+        "Search the web when needed, and return only <page>...</page> content with <text> and <paragraph>."
     )
 
     raw = await call_gemini_raw([{"text": user_prompt}], system_text)

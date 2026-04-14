@@ -1,9 +1,9 @@
-import base64
 from database import save_message, get_file_data, get_user_voice
 from message import send_message, download_telegram_file, send_chat_action, send_voice_bytes
-from api import call_gemini_raw, handle_gemini
+from api import handle_gemini
 from system import get_system_text
 from tts import generate_tts
+from transcriber import transcribe_audio_bytes
 
 
 def _voice_mime_type(voice: dict) -> str:
@@ -26,15 +26,7 @@ async def handle_voice(cid: int, voice: dict, name: str) -> None:
         await send_message(cid, "❌ Failed to download voice message.")
         return
     mime_type = _voice_mime_type(voice)
-    encoded_voice = base64.b64encode(voice_data).decode("ascii")
-    transcription = await call_gemini_raw(
-        [
-            {"text": "Transcribe the following voice in the original language. Don't write anything else except transcription."},
-            {"inlineData": {"mimeType": mime_type, "data": encoded_voice}},
-        ],
-        "You are a transcription engine. Output only the transcription.",
-        model="gemini-2.5-flash",
-    )
+    transcription, _ = await transcribe_audio_bytes(voice_data, mime_type, "voice.ogg")
     transcription_text = (transcription or "").strip()
     if not transcription_text or transcription_text in ("No response received from AI.", "Failed to parse AI response."):
         await send_message(cid, "❌ Failed to transcribe voice message.")

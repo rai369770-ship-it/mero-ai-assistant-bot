@@ -12,6 +12,7 @@ from database import (
     get_user_voice, set_user_voice, get_user_system, set_user_system,
     clear_user_system, get_user_temp, set_user_temp,
     get_credit_message, set_credit_message,
+    get_memories, save_memory, clear_memories,
     ensure_user, is_admin, check_banned,
 )
 from message import (
@@ -34,6 +35,7 @@ from system import get_system_text
 from agent import agent_route, execute_normal_message
 from image_generation import execute_image
 from voice_message import handle_voice
+from transcriber import transcribe_from_telegram_message
 from attachment import (
     handle_photo, handle_document, handle_audio,
     handle_video, handle_animation, handle_sticker,
@@ -249,9 +251,15 @@ async def webhook(request: Request):
 
             if cb_data == "tools_close":
                 await answer_callback(cb_id, "Tools closed")
-                clear_state(cid)
-                await delete_message(cid, mid)
-                await send_message(cid, "🧰 Tools menu closed.")
+                st_now = get_state(cid) or ""
+                if st_now.startswith("tool:") and st_now != "tool:menu":
+                    set_state(cid, "tool:menu")
+                    await delete_message(cid, mid)
+                    await open_tools_menu(cid)
+                else:
+                    clear_state(cid)
+                    await delete_message(cid, mid)
+                    await send_message(cid, "🧰 Tools menu closed.")
                 return JSONResponse({"ok": True})
 
             if cb_data == "tools_cancel":
@@ -276,6 +284,9 @@ async def webhook(request: Request):
                 elif tool_name == "text_analyzer":
                     set_state(cid, "tool:text_analyzer")
                     await send_message(cid, "Write or upload your .txt to analyze.", reply_markup=TOOL_CANCEL)
+                elif tool_name == "audio_transcriber":
+                    set_state(cid, "tool:audio_transcriber")
+                    await send_message(cid, "Upload your audio. I am ready to transcribe.", reply_markup=TOOL_CANCEL)
                 return JSONResponse({"ok": True})
 
             if cb_data == "request_unban":
@@ -389,7 +400,33 @@ async def webhook(request: Request):
             if cb_data == "clear_yes":
                 await answer_callback(cb_id, "Cleared!")
                 clear_history(cid)
+                clear_memories(cid)
                 await edit_message(cid, mid, "🗑️ Conversation cleared.")
+                return JSONResponse({"ok": True})
+
+            if cb_data == "memory_settings":
+                await answer_callback(cb_id)
+                memories = get_memories(cid)
+                text = "🧠 <b>Saved Memories</b>\n\n"
+                text += "\n".join(f"{idx + 1}. {escape_html(item)}" for idx, item in enumerate(memories)) if memories else "No memories saved."
+                await send_message(
+                    cid,
+                    text,
+                    parse_mode="HTML",
+                    reply_markup=ikb([[btn("➕ Add Memory", "memory_add")], [btn("🗑️ Clear Memories", "memory_clear")], [btn("🔙 Back", "back_settings")]]),
+                )
+                return JSONResponse({"ok": True})
+
+            if cb_data == "memory_add":
+                await answer_callback(cb_id)
+                set_state(cid, "awaiting_memory_add")
+                await send_message(cid, "Send memory text to save forever.", reply_markup=ikb([[btn("❌ Cancel", "cancel_reply")]]))
+                return JSONResponse({"ok": True})
+
+            if cb_data == "memory_clear":
+                await answer_callback(cb_id, "Cleared")
+                clear_memories(cid)
+                await send_message(cid, "✅ Memories cleared.")
                 return JSONResponse({"ok": True})
 
             if cb_data == "clear_no":
@@ -701,6 +738,11 @@ async def webhook(request: Request):
                     set_credit_message(text)
                     await send_message(cid, "✅ Developer and credits message updated.", reply_markup=ikb([[btn("🔙 Back", "back_settings")]]))
                     return JSONResponse({"ok": True})
+                if st == "awaiting_memory_add":
+                    clear_state(cid)
+                    save_memory(cid, text)
+                    await send_message(cid, "✅ Memory saved.")
+                    return JSONResponse({"ok": True})
 
                 if st.startswith("tool:"):
                     if st == "tool:text_refiner":
@@ -724,6 +766,9 @@ async def webhook(request: Request):
                         return JSONResponse({"ok": True})
                     if st == "tool:text_analyzer":
                         await run_text_analyzer(cid, text)
+                        return JSONResponse({"ok": True})
+                    if st == "tool:audio_transcriber":
+                        await send_message(cid, "Upload voice/audio file to transcribe.", reply_markup=TOOL_CANCEL)
                         return JSONResponse({"ok": True})
 
                 if st.startswith("awaiting_file_prompt:"):
@@ -845,15 +890,24 @@ async def webhook(request: Request):
             return JSONResponse({"ok": True})
 
         if message.get("voice"):
+            if st == "tool:audio_transcriber":
+                await transcribe_from_telegram_message(cid, message)
+                return JSONResponse({"ok": True})
             ensure_user(cid, name)
             await handle_voice(cid, message["voice"], name)
             return JSONResponse({"ok": True})
 
         if message.get("document"):
+            if st == "tool:audio_transcriber":
+                await transcribe_from_telegram_message(cid, message)
+                return JSONResponse({"ok": True})
             await handle_document(cid, message, name)
             return JSONResponse({"ok": True})
 
         if message.get("audio"):
+            if st == "tool:audio_transcriber":
+                await transcribe_from_telegram_message(cid, message)
+                return JSONResponse({"ok": True})
             await handle_audio(cid, message, name)
             return JSONResponse({"ok": True})
 
@@ -931,7 +985,8 @@ async def webhook(request: Request):
         if text == "/clear":
             ensure_user(cid, name)
             clear_history(cid)
-            await send_message(cid, "🗑️ Conversation cleared.")
+            clear_memories(cid)
+            await send_message(cid, "🗑️ Conversation and memories cleared.")
             return JSONResponse({"ok": True})
 
         if text == "/cls":
@@ -1070,6 +1125,9 @@ async def webhook(request: Request):
                     "/start — Restart and reset your session\n"
                     "/settings — Open admin settings\n"
                     "/clear — Clear chat history\n"
+                    "/memory add &lt;text&gt; — Save memory manually\n"
+                    "/memory list — View saved memories\n"
+                    "/memory clear — Clear saved memories\n"
                     "/cls — Clear stored attachment\n"
                     "/history — View recent chat history\n"
                     "/clear_system — Remove custom system instructions\n"
@@ -1082,6 +1140,9 @@ async def webhook(request: Request):
                     "/start — Restart and reset your session\n"
                     "/settings — Open settings\n"
                     "/clear — Clear chat history\n"
+                    "/memory add &lt;text&gt; — Save memory manually\n"
+                    "/memory list — View saved memories\n"
+                    "/memory clear — Clear saved memories\n"
                     "/cls — Clear stored attachment\n"
                     "/history — View recent chat history\n"
                     "/feedback — Send feedback (text, voice, or attachments)\n"
@@ -1098,6 +1159,22 @@ async def webhook(request: Request):
             return JSONResponse({"ok": True})
 
         if text.startswith("/"):
+            if text.startswith("/memory"):
+                ensure_user(cid, name)
+                payload = text.replace("/memory", "", 1).strip()
+                if payload.startswith("add "):
+                    save_memory(cid, payload[4:].strip())
+                    await send_message(cid, "✅ Memory saved.")
+                elif payload == "list":
+                    memories = get_memories(cid)
+                    msg = "\n".join(f"{i+1}. {m}" for i, m in enumerate(memories)) if memories else "No memories saved."
+                    await send_message(cid, msg)
+                elif payload == "clear":
+                    clear_memories(cid)
+                    await send_message(cid, "✅ Memories cleared.")
+                else:
+                    await send_message(cid, "Usage: /memory add <text> | /memory list | /memory clear")
+                return JSONResponse({"ok": True})
             await send_message(cid, "Command not recognized. Use /help to see available commands.")
             return JSONResponse({"ok": True})
 

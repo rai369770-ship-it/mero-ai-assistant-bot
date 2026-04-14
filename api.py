@@ -8,8 +8,8 @@ from database import get_recent_history, save_message
 from markdown_parse import markdown_to_html, escape_html
 from message import send_message
 
-DEFAULT_MODEL = "gemini-2.5-flash"
-MAX_OUTPUT_TOKENS = 32768
+DEFAULT_MODEL = "gemini-2.5-flash-lite"
+MAX_OUTPUT_TOKENS = 65636
 
 
 def _ordered_keys(preferred_key: Optional[str] = None) -> list[str]:
@@ -98,7 +98,7 @@ def build_body(history_messages: list[dict], current_parts: list, system_text: s
     body: dict = {
         "system_instruction": {"parts": [{"text": system_text}]},
         "contents": contents,
-        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS},
+        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS, "temperature": 2.0},
     }
     if use_tools:
         body["tools"] = [{"google_search": {}}, {"url_context": {}}]
@@ -147,7 +147,7 @@ async def call_gemini_raw(parts: list, system_text: str, model: str = DEFAULT_MO
     body = {
         "system_instruction": {"parts": [{"text": system_text}]},
         "contents": [{"role": "user", "parts": _normalize_parts(parts)}],
-        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS},
+        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS, "temperature": 2.0},
     }
     content, _ = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
     if not content:
