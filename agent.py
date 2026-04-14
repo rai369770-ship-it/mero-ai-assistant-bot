@@ -1,5 +1,6 @@
 import re
-from database import save_message, get_file_data
+
+from database import get_file_data, get_memories, save_agent_context, save_memory, save_message
 from message import send_message
 from api import call_gemini_raw, handle_gemini
 from system import get_system_text
@@ -13,39 +14,49 @@ def processYoutube(prompt: str, link: str) -> dict:
     return {"prompt": (prompt or "").strip() or "Summarize and transcribe this YouTube video", "url": (link or "").strip()}
 
 
-def parse_agent_response(response: str) -> tuple[str, dict]:
-    cleaned = re.sub(r"```python\s*", "", response)
+def _extract_calls(response: str) -> list[str]:
+    cleaned = re.sub(r"```python\s*", "", response or "")
     cleaned = re.sub(r"```\s*", "", cleaned).strip()
+    lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+    calls: list[str] = []
+    for line in lines:
+        if "(" in line and line.endswith(")"):
+            calls.append(line)
+    return calls[:2]
 
-    if (m := re.search(r"processYoutube\(\s*[\"'](.+?)[\"']\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
-        return "youtube", processYoutube(m.group(1), m.group(2))
-    if (m := re.search(r"processYoutube\(\s*(.+?)\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
-        return "youtube", processYoutube(m.group(1).strip("\"'"), m.group(2))
-    if (m := re.search(r"processYoutube\(\s*[\"'](.+?)[\"']\s*,\s*(.+?)\s*\)", cleaned, flags=re.IGNORECASE)):
-        return "youtube", processYoutube(m.group(1), m.group(2).strip("\"'"))
 
-    # Backward compatibility for older router prompts.
-    if (m := re.search(r"sendYouTube\(\s*[\"'](.+?)[\"']\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
-        return "youtube", processYoutube(m.group(1), m.group(2))
-    if (m := re.search(r"sendYouTube\(\s*(.+?)\s*,\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
-        return "youtube", processYoutube(m.group(1).strip("\"'"), m.group(2))
-    if (m := re.search(r"sendYouTube\(\s*[\"'](.+?)[\"']\s*,\s*(.+?)\s*\)", cleaned, flags=re.IGNORECASE)):
-        return "youtube", processYoutube(m.group(1), m.group(2).strip("\"'"))
+def _extract_arg(call: str) -> str:
+    m = re.search(r"\((.*)\)$", call)
+    if not m:
+        return ""
+    return m.group(1).strip()
 
-    if (m := re.search(r"sendNormalMessage\(\s*[\"'](.+?)[\"']\s*\)", cleaned, flags=re.IGNORECASE)):
-        return "normal", {"query": m.group(1)}
-    if (m := re.search(r"sendNormalMessage\(\s*(.+?)\s*\)", cleaned, flags=re.IGNORECASE)):
-        return "normal", {"query": m.group(1).strip("\"'")}
 
-    if re.search(r"generateImage\s*\(", cleaned, flags=re.IGNORECASE):
-        return "image", {}
-
-    if (m := re.search(r'texttopdf\(\s*["\'](.+?)["\']\s*\)', cleaned, flags=re.IGNORECASE)):
-        return "texttopdf", {"prompt": m.group(1)}
-    if (m := re.search(r"texttopdf\(\s*(.+?)\s*\)", cleaned, flags=re.IGNORECASE)):
-        return "texttopdf", {"prompt": m.group(1).strip("\"'")}
-
-    return "normal", {}
+def parse_agent_actions(response: str) -> list[tuple[str, dict]]:
+    calls = _extract_calls(response)
+    actions: list[tuple[str, dict]] = []
+    for call in calls:
+        low = call.lower()
+        if low.startswith("processyoutube") or low.startswith("sendyoutube"):
+            parts = _extract_arg(call).split(",", 1)
+            if len(parts) == 2:
+                actions.append(("youtube", processYoutube(parts[0].strip().strip('"\''), parts[1].strip().strip('"\''))))
+            continue
+        if low.startswith("sendnormalmessage"):
+            actions.append(("normal", {"query": _extract_arg(call).strip('"\'' )}))
+            continue
+        if low.startswith("generateimage"):
+            actions.append(("image", {"query": _extract_arg(call).strip('"\'' )}))
+            continue
+        if low.startswith("texttopdf"):
+            actions.append(("texttopdf", {"prompt": _extract_arg(call).strip('"\'' )}))
+            continue
+        if low.startswith("savememory"):
+            arg_text = _extract_arg(call)
+            mem = arg_text.split(",", 1)[1].strip().strip('"\'') if "," in arg_text else ""
+            actions.append(("save_memory", {"memory": mem}))
+            continue
+    return actions
 
 
 async def execute_normal_message(cid: int, query: str, name: str) -> None:
@@ -56,6 +67,7 @@ async def execute_normal_message(cid: int, query: str, name: str) -> None:
     if file_data and file_data.get("base64"):
         current_parts.append({"inlineData": {"mimeType": file_data["mime_type"], "data": file_data["base64"]}})
         has_file = True
+    save_agent_context(cid, {"prompt": query, "attachments": file_data or {}})
     await handle_gemini(
         cid,
         current_parts,
@@ -67,6 +79,7 @@ async def execute_normal_message(cid: int, query: str, name: str) -> None:
 async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
     await send_message(cid, "🎬 Processing YouTube link...", reply_markup=ikb([[btn("⏳ Please wait...", "noop")]]))
     save_message(cid, "user", f"{prompt} [YouTube: {url}]")
+    save_agent_context(cid, {"prompt": prompt, "attachments": {"youtube_url": url}})
     youtube_prompt = (
         f"Task: {prompt}\n"
         f"YouTube URL: {url}\n\n"
@@ -85,26 +98,36 @@ async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
 async def agent_route(cid: int, user_text: str, name: str) -> None:
     agent_system = (
         "You're an AI agent for a telegram bot built with python. "
-        "Your task is to return the specified function with parameters as told. "
-        "Never write anything except specified function. "
-        "You have to understand prompt and return necessary function. "
-        "You are a function router. Only output a single python function call. No explanation."
+        "Only output function call lines. Never reply to user directly."
     )
-    prompt = AGENT_PROMPT.format(user_prompt=user_text)
-    agent_response = await call_gemini_raw([{"text": prompt}], agent_system)
-    if not agent_response:
+    formatted_memories = "\n".join(f"- {m}" for m in get_memories(cid)) or "- (none)"
+    prompt = AGENT_PROMPT.format(user_prompt=user_text) + f"\n\nMemories: (formattedMemories)\n{formatted_memories}"
+    file_data = get_file_data(cid)
+    save_agent_context(cid, {"prompt": user_text, "attachments": file_data or {}})
+    agent_response = await call_gemini_raw([{"text": prompt}], agent_system, model="gemini-2.5-flash-lite")
+    actions = parse_agent_actions(agent_response or "")
+    if not actions:
         await execute_normal_message(cid, user_text, name)
         return
 
-    action, params = parse_agent_response(agent_response)
-    match action:
-        case "youtube":
-            await execute_youtube(cid, params.get("prompt", "Analyze this video"), params.get("url", ""), name)
-        case "image":
-            await execute_image(cid, user_text, name)
-        case "texttopdf":
-            await execute_text_to_pdf(cid, params.get("prompt", user_text))
-        case "normal":
-            await execute_normal_message(cid, params.get("query", user_text), name)
-        case _:
-            await execute_normal_message(cid, user_text, name)
+    for action, params in actions:
+        resolved_query = params.get("query", user_text)
+        resolved_prompt = params.get("prompt", user_text)
+        if resolved_query in ("prompt", "user_prompt", "{prompt}"):
+            resolved_query = user_text
+        if resolved_prompt in ("prompt", "user_prompt", "{prompt}"):
+            resolved_prompt = user_text
+        match action:
+            case "youtube":
+                await execute_youtube(cid, resolved_prompt or "Analyze this video", params.get("url", ""), name)
+            case "image":
+                await execute_image(cid, resolved_query or user_text, name)
+            case "texttopdf":
+                await execute_text_to_pdf(cid, resolved_prompt or user_text)
+            case "save_memory":
+                if params.get("memory"):
+                    save_memory(cid, params["memory"])
+            case "normal":
+                await execute_normal_message(cid, resolved_query or user_text, name)
+            case _:
+                await execute_normal_message(cid, user_text, name)

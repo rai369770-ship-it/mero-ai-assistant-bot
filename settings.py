@@ -35,6 +35,7 @@ def user_settings_keyboard() -> dict:
     return ikb([
         [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Language", "set_voice")],
         [btn("🌡️ Temperature", "set_temp")],
+        [btn("🧠 Memory", "memory_settings")],
         [btn("🧰 Tools", "open_tools")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("💬 Feedback", "feedback_prompt"), btn("📜 History", "history")],
@@ -48,6 +49,7 @@ def admin_settings_keyboard() -> dict:
     return ikb([
         [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Language", "set_voice")],
         [btn("🌡️ Temperature", "set_temp")],
+        [btn("🧠 Memory", "memory_settings")],
         [btn("🧰 Tools", "open_tools")],
         [btn("🗑️ Clear Chat", "clear"), btn("🧹 Clear Attachment", "cls")],
         [btn("📊 Total Users", "admin_total"), btn("🚫 Banned Users", "admin_banned")],
@@ -129,6 +131,7 @@ def tools_keyboard() -> dict:
         [btn("🌐 Text translator", "tool:text_translator")],
         [btn("📊 Text analyzer", "tool:text_analyzer")],
         [btn("📄 PDF creator", "tool:pdf_creator")],
+        [btn("🎙️ Audio transcriber", "tool:audio_transcriber")],
         [btn("❌ Close", "tools_close")],
     ])
 

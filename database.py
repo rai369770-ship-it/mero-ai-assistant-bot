@@ -22,6 +22,14 @@ def fk(cid: int) -> str:
     return f"chat:{cid}:file"
 
 
+def mk(cid: int) -> str:
+    return f"chat:{cid}:memories"
+
+
+def ck(cid: int) -> str:
+    return f"chat:{cid}:agent_context"
+
+
 def save_user(uid: int, name: str) -> None:
     r.hset("totalUsers", str(uid), name)
 
@@ -31,7 +39,7 @@ def user_exists(uid: int) -> bool:
 
 
 def remove_all_user_data(uid: int) -> None:
-    r.delete(hk(uid), rsk(uid), sk(uid), fk(uid))
+    r.delete(hk(uid), rsk(uid), sk(uid), fk(uid), mk(uid), ck(uid))
     r.delete(f"settings:{uid}:system", f"settings:{uid}:voice", f"settings:{uid}:temp")
     r.hdel("totalUsers", str(uid))
 
@@ -116,6 +124,35 @@ def get_file_data(cid: int) -> Optional[dict]:
 
 def clear_file_data(cid: int) -> None:
     r.delete(fk(cid))
+
+
+def get_memories(cid: int) -> list[str]:
+    return [m for m in r.lrange(mk(cid), 0, -1) if m]
+
+
+def save_memory(cid: int, memory: str) -> None:
+    cleaned = (memory or "").strip()
+    if not cleaned:
+        return
+    memories = get_memories(cid)
+    if cleaned in memories:
+        return
+    r.rpush(mk(cid), cleaned)
+    if r.llen(mk(cid)) > 50:
+        r.ltrim(mk(cid), 1, -1)
+
+
+def clear_memories(cid: int) -> None:
+    r.delete(mk(cid))
+
+
+def save_agent_context(cid: int, payload: dict) -> None:
+    r.set(ck(cid), json.dumps(payload), ex=86400)
+
+
+def get_agent_context(cid: int) -> Optional[dict]:
+    raw = r.get(ck(cid))
+    return json.loads(raw) if raw else None
 
 
 def get_user_voice(cid: int) -> str:
