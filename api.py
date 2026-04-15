@@ -156,7 +156,14 @@ async def call_gemini_raw(parts: list, system_text: str, model: str = DEFAULT_MO
     return text
 
 
-async def handle_gemini(cid: int, current_parts: list, system_text: str, use_tools: bool = True, preferred_key: Optional[str] = None) -> Optional[str]:
+async def handle_gemini(
+    cid: int,
+    current_parts: list,
+    system_text: str,
+    use_tools: bool = True,
+    preferred_key: Optional[str] = None,
+    model: str = DEFAULT_MODEL,
+) -> Optional[str]:
     history = get_recent_history(cid, CONTEXT_SIZE)
     body = build_body(history, current_parts, system_text, use_tools)
     if not await fetch_api_keys():
@@ -164,7 +171,7 @@ async def handle_gemini(cid: int, current_parts: list, system_text: str, use_too
         save_message(cid, "model", msg)
         await send_message(cid, msg)
         return None
-    content, err = await try_api_call(json.dumps(body), DEFAULT_MODEL, preferred_key=preferred_key)
+    content, err = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
     if content:
         ai_text, sources = extract_ai_text(content)
         save_message(cid, "model", ai_text)

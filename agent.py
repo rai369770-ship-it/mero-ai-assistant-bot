@@ -1,3 +1,4 @@
+import ast
 import re
 
 from database import get_file_data, get_memories, save_agent_context, save_memory, save_message
@@ -25,35 +26,85 @@ def _extract_calls(response: str) -> list[str]:
     return calls[:2]
 
 
-def _extract_arg(call: str) -> str:
-    m = re.search(r"\((.*)\)$", call)
-    if not m:
-        return ""
-    return m.group(1).strip()
+def _safe_eval_string(node: ast.AST) -> str:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value.strip()
+    if isinstance(node, ast.Name):
+        return node.id.strip()
+    return ""
+
+
+def _parse_call(call: str) -> tuple[str, list[str], dict[str, str]]:
+    try:
+        expr = ast.parse(call, mode="eval").body
+    except Exception:
+        return "", [], {}
+    if not isinstance(expr, ast.Call):
+        return "", [], {}
+    if isinstance(expr.func, ast.Name):
+        fn_name = expr.func.id
+    else:
+        return "", [], {}
+    args = [_safe_eval_string(arg) for arg in expr.args]
+    kwargs = {}
+    for kw in expr.keywords:
+        if not kw.arg:
+            continue
+        kwargs[kw.arg] = _safe_eval_string(kw.value)
+    return fn_name, args, kwargs
+
+
+def _clean_placeholder(value: str, fallback: str) -> str:
+    cleaned = (value or "").strip()
+    lowered = cleaned.lower()
+    placeholders = {
+        "",
+        "prompt",
+        "query",
+        "user_prompt",
+        "{prompt}",
+        "{query}",
+        "{user_prompt}",
+        "query=",
+        "prompt=",
+        "query =",
+        "prompt =",
+    }
+    if lowered in placeholders or lowered.startswith("query=") or lowered.startswith("prompt="):
+        return fallback
+    return cleaned
+
+
+def _is_youtube_url(url: str) -> bool:
+    candidate = (url or "").strip()
+    return bool(re.match(r"^https?://(?:www\.)?(?:youtube\.com|m\.youtube\.com|youtu\.be)/", candidate, flags=re.IGNORECASE))
 
 
 def parse_agent_actions(response: str) -> list[tuple[str, dict]]:
     calls = _extract_calls(response)
     actions: list[tuple[str, dict]] = []
     for call in calls:
-        low = call.lower()
+        fn_name, args, kwargs = _parse_call(call)
+        low = fn_name.lower().strip()
         if low.startswith("processyoutube") or low.startswith("sendyoutube"):
-            parts = _extract_arg(call).split(",", 1)
-            if len(parts) == 2:
-                actions.append(("youtube", processYoutube(parts[0].strip().strip('"\''), parts[1].strip().strip('"\''))))
+            prompt = kwargs.get("prompt") or (args[0] if len(args) > 0 else "")
+            link = kwargs.get("link") or kwargs.get("url") or (args[1] if len(args) > 1 else "")
+            actions.append(("youtube", processYoutube(prompt, link)))
             continue
         if low.startswith("sendnormalmessage"):
-            actions.append(("normal", {"query": _extract_arg(call).strip('"\'' )}))
+            query = kwargs.get("query") or (args[0] if args else "")
+            actions.append(("normal", {"query": query}))
             continue
         if low.startswith("generateimage"):
-            actions.append(("image", {"query": _extract_arg(call).strip('"\'' )}))
+            query = kwargs.get("query") or (args[0] if args else "")
+            actions.append(("image", {"query": query}))
             continue
         if low.startswith("texttopdf"):
-            actions.append(("texttopdf", {"prompt": _extract_arg(call).strip('"\'' )}))
+            prompt = kwargs.get("prompt") or (args[0] if args else "")
+            actions.append(("texttopdf", {"prompt": prompt}))
             continue
         if low.startswith("savememory"):
-            arg_text = _extract_arg(call)
-            mem = arg_text.split(",", 1)[1].strip().strip('"\'') if "," in arg_text else ""
+            mem = kwargs.get("memory") or (args[1] if len(args) > 1 else "")
             actions.append(("save_memory", {"memory": mem}))
             continue
     return actions
@@ -77,22 +128,25 @@ async def execute_normal_message(cid: int, query: str, name: str) -> None:
 
 
 async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
+    if not _is_youtube_url(url):
+        await execute_normal_message(cid, f"{prompt}\n\nURL: {url}".strip(), name)
+        return
     await send_message(cid, "🎬 Processing YouTube link...", reply_markup=ikb([[btn("⏳ Please wait...", "noop")]]))
     save_message(cid, "user", f"{prompt} [YouTube: {url}]")
     save_agent_context(cid, {"prompt": prompt, "attachments": {"youtube_url": url}})
     youtube_prompt = (
         f"Task: {prompt}\n"
         f"YouTube URL: {url}\n\n"
-        "Use Gemini video understanding for this YouTube URL. "
-        "If transcript/audio is available, summarize spoken content with timestamps. "
-        "Also summarize key visual events. "
-        "If exact details are unavailable, clearly state limitations and still provide best-effort analysis."
+        "Analyze this public YouTube URL directly via Gemini video understanding. "
+        "Summarize spoken content and key visual events. "
+        "Include MM:SS timestamps for important moments when possible. "
+        "If details are unclear, state limitations clearly."
     )
     parts = [
-        {"file_data": {"mime_type": "video/*", "file_uri": url}},
+        {"file_data": {"file_uri": url}},
         {"text": youtube_prompt},
     ]
-    await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False)
+    await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False, model="gemini-2.5-flash")
 
 
 async def agent_route(cid: int, user_text: str, name: str) -> None:
@@ -111,15 +165,12 @@ async def agent_route(cid: int, user_text: str, name: str) -> None:
         return
 
     for action, params in actions:
-        resolved_query = params.get("query", user_text)
-        resolved_prompt = params.get("prompt", user_text)
-        if resolved_query in ("prompt", "user_prompt", "{prompt}"):
-            resolved_query = user_text
-        if resolved_prompt in ("prompt", "user_prompt", "{prompt}"):
-            resolved_prompt = user_text
+        resolved_query = _clean_placeholder(params.get("query", user_text), user_text)
+        resolved_prompt = _clean_placeholder(params.get("prompt", user_text), user_text)
         match action:
             case "youtube":
-                await execute_youtube(cid, resolved_prompt or "Analyze this video", params.get("url", ""), name)
+                video_url = _clean_placeholder(params.get("url", ""), "")
+                await execute_youtube(cid, resolved_prompt or "Analyze this video", video_url, name)
             case "image":
                 await execute_image(cid, resolved_query or user_text, name)
             case "texttopdf":

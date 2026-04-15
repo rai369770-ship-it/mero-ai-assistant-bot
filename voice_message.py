@@ -1,9 +1,7 @@
-from database import save_message, get_file_data, get_user_voice
-from message import send_message, download_telegram_file, send_chat_action, send_voice_bytes
-from api import handle_gemini
-from system import get_system_text
-from tts import generate_tts
+from database import save_message
+from message import send_message, download_telegram_file, send_chat_action
 from transcriber import transcribe_audio_bytes
+from agent import agent_route
 
 
 def _voice_mime_type(voice: dict) -> str:
@@ -32,17 +30,5 @@ async def handle_voice(cid: int, voice: dict, name: str) -> None:
         await send_message(cid, "❌ Failed to transcribe voice message.")
         return
     save_message(cid, "user", f"[Voice] {transcription_text}")
-    current_parts: list = [{"text": transcription_text}]
-    file_data = get_file_data(cid)
-    has_file = False
-    if file_data and file_data.get("base64"):
-        current_parts.append({"inlineData": {"mimeType": file_data["mime_type"], "data": file_data["base64"]}})
-        has_file = True
-    ai_response = await handle_gemini(cid, current_parts, get_system_text(name, cid), use_tools=not has_file)
-    if ai_response and ai_response not in ("No response received from AI.", "Failed to parse AI response."):
-        user_voice = get_user_voice(cid)
-        tts_text = ai_response[:300]
-        await send_chat_action(cid, "record_voice")
-        audio_bytes = await generate_tts(tts_text, user_voice)
-        if audio_bytes:
-            await send_voice_bytes(cid, audio_bytes, "🎙️ Voice response")
+    await send_message(cid, f"📝 Transcribed: {transcription_text}")
+    await agent_route(cid, transcription_text, name)
