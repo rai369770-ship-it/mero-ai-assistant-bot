@@ -18,11 +18,12 @@ def processYoutube(prompt: str, link: str) -> dict:
 def _extract_calls(response: str) -> list[str]:
     cleaned = re.sub(r"```python\s*", "", response or "")
     cleaned = re.sub(r"```\s*", "", cleaned).strip()
-    lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
-    calls: list[str] = []
-    for line in lines:
-        if "(" in line and line.endswith(")"):
-            calls.append(line)
+    calls = re.findall(r"\b[A-Za-z_]\w*\([^()\n]*(?:\([^()\n]*\)[^()\n]*)*\)", cleaned)
+    if not calls:
+        lines = [ln.strip() for ln in cleaned.splitlines() if ln.strip()]
+        for line in lines:
+            if "(" in line and line.endswith(")"):
+                calls.append(line)
     return calls[:2]
 
 

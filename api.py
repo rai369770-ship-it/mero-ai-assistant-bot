@@ -4,7 +4,7 @@ from typing import Optional
 
 from config import CONTEXT_SIZE
 from api_keys import fetch_api_keys, get_keys
-from database import get_recent_history, save_message
+from database import get_recent_history, save_message, get_user_temp
 from markdown_parse import markdown_to_html, escape_html
 from message import send_message
 
@@ -147,7 +147,7 @@ async def call_gemini_raw(parts: list, system_text: str, model: str = DEFAULT_MO
     body = {
         "system_instruction": {"parts": [{"text": system_text}]},
         "contents": [{"role": "user", "parts": _normalize_parts(parts)}],
-        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS, "temperature": 2.0},
+        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS, "temperature": 0.4},
     }
     content, _ = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
     if not content:
@@ -166,6 +166,7 @@ async def handle_gemini(
 ) -> Optional[str]:
     history = get_recent_history(cid, CONTEXT_SIZE)
     body = build_body(history, current_parts, system_text, use_tools)
+    body["generationConfig"]["temperature"] = get_user_temp(cid)
     if not await fetch_api_keys():
         msg = "Could not fetch API keys. Please try again later."
         save_message(cid, "model", msg)
