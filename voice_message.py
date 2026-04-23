@@ -1,7 +1,8 @@
-from database import save_message
-from message import send_message, download_telegram_file, send_chat_action
+from database import save_message, get_all_history, get_user_voice
+from message import send_message, download_telegram_file, send_chat_action, send_voice_bytes
 from transcriber import transcribe_audio_bytes
 from agent import agent_route
+from tts import generate_tts
 
 
 def _voice_mime_type(voice: dict) -> str:
@@ -32,3 +33,16 @@ async def handle_voice(cid: int, voice: dict, name: str) -> None:
     save_message(cid, "user", f"[Voice] {transcription_text}")
     await send_message(cid, f"📝 Transcribed: {transcription_text}")
     await agent_route(cid, transcription_text, name)
+    history = get_all_history(cid)
+    if not history:
+        return
+    last = history[-1]
+    if last.get("role") != "model":
+        return
+    reply_text = (last.get("text") or "").strip()
+    if not reply_text:
+        return
+    voice_lang = get_user_voice(cid)
+    voice_audio = await generate_tts(reply_text, voice_lang)
+    if voice_audio:
+        await send_voice_bytes(cid, voice_audio, "🎧 Voice response", "response.mp3", "audio/mpeg")

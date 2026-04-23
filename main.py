@@ -55,9 +55,11 @@ from tools import (
 
 import urllib.parse
 import asyncio
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 app = FastAPI()
+logger = logging.getLogger("mero.main")
 
 
 def get_user_name(message: dict) -> str:
@@ -215,8 +217,13 @@ async def webhook(request: Request):
             cb = data["callback_query"]
             cb_id = cb["id"]
             cb_data = cb.get("data", "")
-            cid = cb["message"]["chat"]["id"]
-            mid = cb["message"]["message_id"]
+            cb_message = cb.get("message") or {}
+            cid = cb_message.get("chat", {}).get("id") or cb.get("from", {}).get("id")
+            mid = cb_message.get("message_id")
+            if cid is None:
+                await answer_callback(cb_id, "Invalid callback context.")
+                logger.warning("callback_missing_chat_id data=%s", cb_data)
+                return JSONResponse({"ok": True})
             name = get_user_name(cb)
 
             if check_banned(cid) and cb_data != "request_unban":
@@ -684,6 +691,7 @@ async def webhook(request: Request):
                 await send_message(cid, f"🧹 Cleared data for {len(failed_users)} failed users.")
                 return JSONResponse({"ok": True})
 
+            await answer_callback(cb_id, "Unknown action.")
             return JSONResponse({"ok": True})
 
         if "message" not in data:
@@ -1192,4 +1200,5 @@ async def webhook(request: Request):
         return JSONResponse({"ok": True})
 
     except Exception:
+        logger.exception("webhook_failed")
         return JSONResponse({"ok": True})
