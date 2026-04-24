@@ -23,9 +23,9 @@ def parse_agent_response(response: str) -> tuple[str, dict]:
 
 
 async def execute_normal_message(cid: int, query: str, name: str) -> None:
-    save_message(cid, "user", query)
+    await save_message(cid, "user", query)
     current_parts: list = [{"text": query}]
-    file_data = get_file_data(cid)
+    file_data = await get_file_data(cid)
     has_file = False
     if file_data:
         if file_data.get("uri"):
@@ -37,7 +37,7 @@ async def execute_normal_message(cid: int, query: str, name: str) -> None:
     await handle_gemini(
         cid,
         current_parts,
-        get_system_text(name, cid),
+        await get_system_text(name, cid),
         use_tools=not has_file,
         preferred_key=file_data.get("api_key", "") if file_data else None,
     )
@@ -45,12 +45,12 @@ async def execute_normal_message(cid: int, query: str, name: str) -> None:
 
 async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
     await send_message(cid, "🎬 Processing video...", reply_markup=ikb([[btn("⏳ Please wait...", "noop")]]))
-    save_message(cid, "user", f"{prompt} [YouTube: {url}]")
+    await save_message(cid, "user", f"{prompt} [YouTube: {url}]")
     current_parts = [
         {"text": prompt},
         {"fileData": {"mimeType": "video/mp4", "fileUri": url}},
     ]
-    await handle_gemini(cid, current_parts, get_system_text(name, cid), use_tools=False)
+    await handle_gemini(cid, current_parts, await get_system_text(name, cid), use_tools=False)
 
 
 async def agent_route(cid: int, user_text: str, name: str) -> None:

@@ -1,1 +1,74 @@
-(message.py)
+```python
+# Compiled and build artifacts
+*.pyc
+__pycache__/
+*.o
+*.obj
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+
+# Dependencies
+.venv/
+venv/
+.env
+.env.local
+*.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# Python specific
+*.pyc
+__pycache__/
+.Python
+*.pyo
+*.pyd
+*$py.class
+*$py.o
+*$py.d
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+.tox/
+.coverage*
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# System files
+.DS_Store
+Thumbs.db
+```
