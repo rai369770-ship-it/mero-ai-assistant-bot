@@ -124,18 +124,18 @@ async def call_gemini_raw(parts: list, system_text: str, model: str = "gemini-2.
 
 
 async def handle_gemini(cid: int, current_parts: list, system_text: str, use_tools: bool = True, preferred_key: Optional[str] = None) -> Optional[str]:
-    history = get_recent_history(cid, CONTEXT_SIZE)
+    history = await get_recent_history(cid, CONTEXT_SIZE)
     body = build_body(history, current_parts, system_text, use_tools)
     if not await fetch_api_keys():
         msg = "Could not fetch API keys. Please try again later."
-        save_message(cid, "model", msg)
+        await save_message(cid, "model", msg)
         await send_message(cid, msg)
         return None
-    model = get_user_model(cid)
+    model = await get_user_model(cid)
     content, err = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
     if content:
         ai_text, sources = extract_ai_text(content)
-        save_message(cid, "model", ai_text)
+        await save_message(cid, "model", ai_text)
         if ai_text not in ("No response received from AI.", "Failed to parse AI response."):
             formatted = format_response_with_sources(ai_text, sources)
             await send_message(cid, formatted, parse_mode="HTML")
@@ -143,6 +143,6 @@ async def handle_gemini(cid: int, current_parts: list, system_text: str, use_too
             await send_message(cid, ai_text)
         return ai_text
     error = f"Error: {err or 'Unknown error occurred'}"
-    save_message(cid, "model", error)
+    await save_message(cid, "model", error)
     await send_message(cid, error)
     return None
