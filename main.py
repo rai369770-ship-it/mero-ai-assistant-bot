@@ -39,6 +39,7 @@ from attachment import (
     handle_photo, handle_document, handle_audio,
     handle_video, handle_animation, handle_sticker,
 )
+from btn_feedback import send_btn_feedback_to_admins
 
 import urllib.parse
 
@@ -130,6 +131,42 @@ async def run_broadcast(admin_id: int, text: str | None = None, voice_data: byte
 @app.get("/")
 async def home():
     return {"status": "ok", "message": "Mero AI Assistant Bot is running!"}
+
+
+@app.post("/btn-feedback")
+async def btn_feedback(request: Request):
+    """Handle feedback form submission from button/web interface."""
+    try:
+        data = await request.json()
+        
+        # Extract required parameters
+        name = data.get("name", "").strip()
+        email = data.get("email", "").strip()
+        category = data.get("category", "").strip()
+        subject = data.get("subject", "").strip()
+        message = data.get("message", "").strip()
+        
+        # Validate all required fields
+        if not name:
+            return JSONResponse({"success": False, "error": "Name is required"})
+        if not email:
+            return JSONResponse({"success": False, "error": "Email is required"})
+        if not category:
+            return JSONResponse({"success": False, "error": "Category is required"})
+        if not subject:
+            return JSONResponse({"success": False, "error": "Subject is required"})
+        if not message:
+            return JSONResponse({"success": False, "error": "Message is required"})
+        
+        # Send formatted message to admins
+        success = await send_btn_feedback_to_admins(name, email, category, subject, message)
+        
+        if success:
+            return JSONResponse({"success": True})
+        else:
+            return JSONResponse({"success": False, "error": "Failed to send feedback"})
+    except Exception as e:
+        return JSONResponse({"success": False, "error": str(e)})
 
 
 @app.post("/webhook")
