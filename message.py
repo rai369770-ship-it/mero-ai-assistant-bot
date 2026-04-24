@@ -1,4 +1,5 @@
 import httpx
+import json
 from typing import Optional
 from config import TELEGRAM_API, BOT_TOKEN
 
@@ -12,7 +13,7 @@ async def send_message(cid: int, text: str, parse_mode: Optional[str] = None, re
             if parse_mode:
                 payload["parse_mode"] = parse_mode
             if reply_markup:
-                payload["reply_markup"] = reply_markup
+                payload["reply_markup"] = json.dumps(reply_markup)
             resp = await client.post(f"{TELEGRAM_API}/sendMessage", json=payload)
             result = resp.json()
             if not result.get("ok") and parse_mode:
@@ -27,7 +28,7 @@ async def send_photo(cid: int, photo_url: str, caption: Optional[str] = None, re
     if caption:
         payload["caption"] = caption[:1024]
     if reply_markup:
-        payload["reply_markup"] = reply_markup
+        payload["reply_markup"] = json.dumps(reply_markup)
     async with httpx.AsyncClient(timeout=60.0) as client:
         return (await client.post(f"{TELEGRAM_API}/sendPhoto", json=payload)).json()
 
@@ -68,7 +69,7 @@ async def edit_message(cid: int, mid: int, text: str, parse_mode: Optional[str] 
     if parse_mode:
         payload["parse_mode"] = parse_mode
     if reply_markup:
-        payload["reply_markup"] = reply_markup
+        payload["reply_markup"] = json.dumps(reply_markup)
     async with httpx.AsyncClient(timeout=10.0) as client:
         resp = await client.post(f"{TELEGRAM_API}/editMessageText", json=payload)
         if not resp.json().get("ok") and parse_mode:
