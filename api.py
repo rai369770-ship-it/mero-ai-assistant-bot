@@ -8,7 +8,7 @@ from database import get_recent_history, save_message, get_user_temp
 from markdown_parse import markdown_to_html, escape_html
 from message import send_message
 
-MAX_OUTPUT_TOKENS = 65636
+MAX_OUTPUT_TOKENS = 64000
 
 
 def get_model_for_user(chat_id: int) -> str:
@@ -106,7 +106,7 @@ def build_body(history_messages: list[dict], current_parts: list, system_text: s
     body: dict = {
         "system_instruction": {"parts": [{"text": system_text}]},
         "contents": contents,
-        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS, "temperature": 2.0},
+        "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS, "temperature": 1.0},
     }
     if use_tools:
         body["tools"] = [{"google_search": {}}, {"url_context": {}}]
