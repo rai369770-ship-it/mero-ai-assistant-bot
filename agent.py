@@ -92,10 +92,6 @@ def parse_agent_actions(response: str) -> list[tuple[str, dict]]:
             link = kwargs.get("link") or kwargs.get("url") or (args[1] if len(args) > 1 else "")
             actions.append(("youtube", processYoutube(prompt, link)))
             continue
-        if low.startswith("sendnormalmessage"):
-            query = kwargs.get("query") or (args[0] if args else "")
-            actions.append(("normal", {"query": query}))
-            continue
         if low.startswith("generateimage"):
             query = kwargs.get("query") or (args[0] if args else "")
             actions.append(("image", {"query": query}))
@@ -147,19 +143,25 @@ async def execute_youtube(cid: int, prompt: str, url: str, name: str) -> None:
         {"file_data": {"file_uri": url}},
         {"text": youtube_prompt},
     ]
-    await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False, model="gemini-2.5-flash")
+    # Use appropriate model based on user type
+    from api import get_model_for_user
+    youtube_model = get_model_for_user(cid)
+    await handle_gemini(cid, parts, get_system_text(name, cid), use_tools=False, model=youtube_model)
 
 
 async def agent_route(cid: int, user_text: str, name: str) -> None:
     agent_system = (
         "You're an AI agent for a telegram bot built with python. "
-        "Only output function call lines. Never reply to user directly."
+        "Only output function call lines. Reply if simple tasks."
     )
     formatted_memories = "\n".join(f"- {m}" for m in get_memories(cid)) or "- (none)"
     prompt = AGENT_PROMPT.format(user_prompt=user_text) + f"\n\nMemories: (formattedMemories)\n{formatted_memories}"
     file_data = get_file_data(cid)
     save_agent_context(cid, {"prompt": user_text, "attachments": file_data or {}})
-    agent_response = await call_gemini_raw([{"text": prompt}], agent_system, model="gemini-2.5-flash-lite")
+    # Use appropriate model based on user type
+    from api import get_model_for_user
+    agent_model = get_model_for_user(cid)
+    agent_response = await call_gemini_raw([{"text": prompt}], agent_system, model=agent_model)
     actions = parse_agent_actions(agent_response or "")
     if not actions:
         await execute_normal_message(cid, user_text, name)
@@ -179,7 +181,5 @@ async def agent_route(cid: int, user_text: str, name: str) -> None:
             case "save_memory":
                 if params.get("memory"):
                     save_memory(cid, params["memory"])
-            case "normal":
-                await execute_normal_message(cid, resolved_query or user_text, name)
             case _:
                 await execute_normal_message(cid, user_text, name)

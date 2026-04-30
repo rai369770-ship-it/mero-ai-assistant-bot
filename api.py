@@ -2,14 +2,20 @@ import json
 import httpx
 from typing import Optional
 
-from config import CONTEXT_SIZE
+from config import CONTEXT_SIZE, USER_MODEL, ADMIN_MODEL, ADMINS
 from api_keys import fetch_api_keys, get_keys
 from database import get_recent_history, save_message, get_user_temp
 from markdown_parse import markdown_to_html, escape_html
 from message import send_message
 
-DEFAULT_MODEL = "gemini-2.5-flash-lite"
 MAX_OUTPUT_TOKENS = 65636
+
+
+def get_model_for_user(chat_id: int) -> str:
+    """Return the appropriate model based on whether the user is an admin."""
+    if chat_id in ADMINS:
+        return ADMIN_MODEL
+    return USER_MODEL
 
 
 def _ordered_keys(preferred_key: Optional[str] = None) -> list[str]:
@@ -83,7 +89,9 @@ async def try_api_call(body_json: str, model: str, preferred_key: Optional[str] 
                 continue
             if resp.status_code == 200:
                 return resp.text, None
+            # Only continue to next key if this one failed
             failures.append(f"key#{idx}: status_{resp.status_code}")
+            # Continue iterating through all keys until one succeeds
     return None, "; ".join(failures) if failures else "All API keys exhausted"
 
 
@@ -141,7 +149,7 @@ def format_response_with_sources(ai_text: str, sources: list[dict]) -> str:
     return html
 
 
-async def call_gemini_raw(parts: list, system_text: str, model: str = DEFAULT_MODEL, preferred_key: Optional[str] = None) -> Optional[str]:
+async def call_gemini_raw(parts: list, system_text: str, model: str = USER_MODEL, preferred_key: Optional[str] = None) -> Optional[str]:
     if not await fetch_api_keys():
         return None
     body = {
@@ -149,7 +157,7 @@ async def call_gemini_raw(parts: list, system_text: str, model: str = DEFAULT_MO
         "contents": [{"role": "user", "parts": _normalize_parts(parts)}],
         "generationConfig": {"maxOutputTokens": MAX_OUTPUT_TOKENS, "temperature": 0.4},
     }
-    content, _ = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
+    content, err = await try_api_call(json.dumps(body), model, preferred_key=preferred_key)
     if not content:
         return None
     text, _ = extract_ai_text(content)
@@ -162,8 +170,11 @@ async def handle_gemini(
     system_text: str,
     use_tools: bool = True,
     preferred_key: Optional[str] = None,
-    model: str = DEFAULT_MODEL,
+    model: Optional[str] = None,
 ) -> Optional[str]:
+    # Use provided model or determine based on user type
+    if model is None:
+        model = get_model_for_user(cid)
     history = get_recent_history(cid, CONTEXT_SIZE)
     body = build_body(history, current_parts, system_text, use_tools)
     body["generationConfig"]["temperature"] = get_user_temp(cid)

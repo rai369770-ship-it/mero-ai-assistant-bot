@@ -205,7 +205,7 @@ def _run_parallel_broadcast(users: list[int], sender) -> tuple[int, int, list[in
 
 @app.get("/")
 async def home():
-    return {"status": "ok", "message": "Mero AI Assistant Bot is running!"}
+    return {"status": "ok", "message": "Daily AI Companion is running!"}
 
 
 @app.post("/webhook")
@@ -238,7 +238,7 @@ async def webhook(request: Request):
                 await answer_callback(cb_id)
                 await send_message(
                     cid,
-                    f"📤 <b>Share Mero AI with your friends!</b>\n\n{escape_html(SHARE_TEXT)}",
+                    f"📤 <b>Share Daily AI Companion with your friends!</b>\n\n{escape_html(SHARE_TEXT)}",
                     parse_mode="HTML",
                     reply_markup=share_keyboard(),
                 )
@@ -376,7 +376,7 @@ async def webhook(request: Request):
                 else:
                     text_parts = [f"📜 <b>History ({len(history)} messages):</b>\n"]
                     for msg in history[-20:]:
-                        label = "👤 You" if msg["role"] == "user" else "🤖 Mero AI"
+                        label = "👤 You" if msg["role"] == "user" else "🤖 Daily AI Companion"
                         t = msg.get("text", "")[:500]
                         text_parts.append(f"<b>{label}:</b>\n{escape_html(t)}\n")
                     await send_message(cid, "\n".join(text_parts), parse_mode="HTML")
@@ -390,7 +390,7 @@ async def webhook(request: Request):
                     return JSONResponse({"ok": True})
                 export_lines = []
                 for msg in history:
-                    role = "You" if msg["role"] == "user" else "Mero AI"
+                    role = "You" if msg["role"] == "user" else "Daily AI Companion"
                     export_lines.append(f"[{role}]\n{msg.get('text', '')}\n")
                 export_text = "\n---\n".join(export_lines)
                 file_bytes = export_text.encode("utf-8")
@@ -943,10 +943,10 @@ async def webhook(request: Request):
             save_user(cid, name)
             clear_history(cid)
             welcome = (
-                f"👋 <b>Hi {escape_html(name)}, Welcome to Mero AI!</b>\n\n"
-                f"🤖 <b>Mero</b> is your intelligent AI assistant, optimized with advanced large language models "
+                f"👋 <b>Hi {escape_html(name)}, Welcome to Daily AI Companion!</b>\n\n"
+                f"🤖 <b>Daily AI Companion</b> is your intelligent AI assistant, optimized with advanced large language models "
                 f"to deliver fast, accurate, and context-aware responses.\n\n"
-                f"<b>Here's what Mero can do for you:</b>\n\n"
+                f"<b>Here's what Daily AI Companion can do for you:</b>\n\n"
                 f"💬 <b>Natural Conversations</b> — Chat naturally on any topic\n"
                 f"🌐 <b>Real-time Web Search</b> — Get the most up-to-date information\n"
                 f"🎬 <b>YouTube Analysis</b> — Transcribe, summarize &amp; analyze videos\n"
@@ -960,13 +960,13 @@ async def webhook(request: Request):
                 f"🌍 <b>Translation</b> — Translate between languages effortlessly\n"
                 f"📊 <b>Math &amp; Science</b> — Solve complex problems step by step\n"
                 f"📖 <b>Summarization</b> — Condense long texts into key points\n"
-                f"🧠 <b>Memory</b> — Mero remembers your conversations for contextual responses\n"
+                f"🧠 <b>Memory</b> — Daily AI Companion remembers your conversations for contextual responses\n"
                 f"📋 <b>Custom Instructions</b> — Set system instructions for personalized behavior\n"
-                f"🎙️ <b>Voice Responses</b> — Mero can reply with voice in many languages\n\n"
+                f"🎙️ <b>Voice Responses</b> — Daily AI Companion can reply with voice in many languages\n\n"
                 f"━━━━━━━━━━━━━━━━━━━━━\n\n"
-                f"Mero is <b>fast, free, and powerful</b>. With its agentic workflow, "
+                f"Daily AI Companion is <b>fast, free, and powerful</b>. With its agentic workflow, "
                 f"it understands your intent and routes your requests intelligently.\n\n"
-                f"🙏 <i>Thank you for using Mero! If you love it, share it with your friends.</i>"
+                f"🙏 <i>Thank you for using Daily AI Companion! If you love it, share it with your friends.</i>"
             )
             await send_message(cid, welcome, parse_mode="HTML", reply_markup=start_keyboard())
             await send_message(
@@ -1020,7 +1020,7 @@ async def webhook(request: Request):
                 return JSONResponse({"ok": True})
             text_parts = [f"📜 <b>History ({len(history)} messages):</b>\n"]
             for msg in history[-20:]:
-                label = "👤 You" if msg["role"] == "user" else "🤖 Mero AI"
+                label = "👤 You" if msg["role"] == "user" else "🤖 Daily AI Companion"
                 t = msg.get("text", "")[:500]
                 text_parts.append(f"<b>{label}:</b>\n{escape_html(t)}\n")
             await send_message(cid, "\n".join(text_parts), parse_mode="HTML")
@@ -1122,7 +1122,7 @@ async def webhook(request: Request):
             ensure_user(cid, name)
             if is_admin(cid):
                 help_text = (
-                    "📖 <b>Mero AI Admin Help</b>\n\n"
+                    "📖 <b>Daily AI Companion Admin Help</b>\n\n"
                     "<b>Admin Commands</b>\n"
                     "/total — View all users\n"
                     "/sendMessage &lt;id&gt; - &lt;text&gt; — Message a user\n"
@@ -1143,7 +1143,7 @@ async def webhook(request: Request):
                 )
             else:
                 help_text = (
-                    "📖 <b>Mero AI User Help</b>\n\n"
+                    "📖 <b>Daily AI Companion User Help</b>\n\n"
                     "<b>User Commands</b>\n"
                     "/start — Restart and reset your session\n"
                     "/settings — Open settings\n"
@@ -1189,7 +1189,7 @@ async def webhook(request: Request):
         if not user_exists(cid):
             save_user(cid, name)
             welcome = (
-                f"👋 <b>Hi {escape_html(name)}, Welcome to Mero AI!</b>\n\n"
+                f"👋 <b>Hi {escape_html(name)}, Welcome to Daily AI Companion!</b>\n\n"
                 f"Send /start for the full introduction, or just keep chatting!"
             )
             await send_message(cid, welcome, parse_mode="HTML", reply_markup=start_keyboard())

@@ -197,7 +197,7 @@ def check_banned(cid: int) -> bool:
     return is_banned(cid) and not is_admin(cid)
 
 def get_credit_message() -> str:
-    return r.get("settings:credit_message") or "Developer: Mero Team\nCredits: Thanks for using Mero AI Assistant Bot."
+    return r.get("settings:credit_message") or "Developer: Daily AI Companion Team\nCredits: Thanks for using Daily AI Companion."
 
 
 def set_credit_message(text: str) -> None:
