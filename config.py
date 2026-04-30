@@ -1,6 +1,6 @@
 import os
 
-BOT_TOKEN = os.environ.get("bot_token", "")
+BOT_TOKEN = "8750953092:AAEN5xpHQ1fOqVjjg-cHw_aF0xbgTo2J5bE"
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POOL_API = "https://sr-pool-api-5bm.pages.dev"
 MODEL = "gemini-2.5-flash-lite"
