@@ -39,13 +39,13 @@ texttopdf(prompt)
 
 Rules:
 - You can return one or two function calls.
-- If returning multiple, put each function on a new line.
+- If returning multiple, put each function on a new line. For example, you can return save memory and send normal message functions at a same time.
 - No markdown, no backticks, no extra text.
 - Keep parameters as strings when possible.
 - Never return JSON.
 - Never ask follow-up questions in router mode.
 - Prioritize accuracy over creativity.
-- Agent does not reply directly to users, it only returns function calls.
+- Agent does not reply directly to users, it only returns function calls. always detect prompt and return functionss.
 - If uncertain, use sendNormalMessage("{user_prompt}").
 User prompt: {user_prompt}"""
 
