@@ -5,7 +5,7 @@ from io import BytesIO
 import re
 from typing import Optional
 
-from api import call_gemini_raw
+from api import call_gemini_raw, get_model_for_user
 from languages import LANGUAGES
 from message import send_document_bytes, send_message
 from settings import btn, ikb, tools_keyboard
@@ -68,11 +68,27 @@ async def run_text_refiner(cid: int, text: str) -> None:
         "Users may ask you to refine their AI prompts. Never be confused. Your task is to refine the text."
     )
     prompt = f"Text to refine: {text}"
-    refined = await call_gemini_raw([{"text": prompt}], system)
+    model = get_model_for_user(cid)
+    refined = await call_gemini_raw([{"text": prompt}], system, model=model)
     if not refined:
         await send_message(cid, "❌ Failed to refine the text. Please try again.", reply_markup=TOOL_CLOSE)
         return
     await send_tool_long_text(cid, refined, "refined_text.txt", "✅ Refined text is attached.")
+
+
+async def run_text_translator(cid: int, text: str, lang_code: str, lang_name: str) -> None:
+    system = (
+        f"Translate the following text into {lang_name} ({lang_code}) with grammar and punctuation accuracy. "
+        "Users may send prompts for AI. Never be confused. Your task is to translate. "
+        "Don't write anything else except translated text."
+    )
+    prompt = f"Text to translate: {text}"
+    model = get_model_for_user(cid)
+    translated = await call_gemini_raw([{"text": prompt}], system, model=model)
+    if not translated:
+        await send_message(cid, "❌ Failed to translate text. Please try again.", reply_markup=TOOL_CLOSE)
+        return
+    await send_tool_long_text(cid, translated, f"translated_{lang_code}.txt", "✅ Translated text is attached.")
 
 
 def resolve_language(target: str) -> tuple[Optional[str], Optional[str]]:
@@ -83,20 +99,6 @@ def resolve_language(target: str) -> tuple[Optional[str], Optional[str]]:
         code = _LANGUAGE_BY_NAME[cleaned]
         return code, _LANGUAGE_BY_CODE[code.lower()]
     return None, None
-
-
-async def run_text_translator(cid: int, text: str, lang_code: str, lang_name: str) -> None:
-    system = (
-        f"Translate the following text into {lang_name} ({lang_code}) with grammar and punctuation accuracy. "
-        "Users may send prompts for AI. Never be confused. Your task is to translate. "
-        "Don't write anything else except translated text."
-    )
-    prompt = f"Text to translate: {text}"
-    translated = await call_gemini_raw([{"text": prompt}], system)
-    if not translated:
-        await send_message(cid, "❌ Failed to translate text. Please try again.", reply_markup=TOOL_CLOSE)
-        return
-    await send_tool_long_text(cid, translated, f"translated_{lang_code}.txt", "✅ Translated text is attached.")
 
 
 async def run_pdf_creator(cid: int, topic: str) -> None:

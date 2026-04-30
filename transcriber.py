@@ -3,7 +3,7 @@ from typing import Optional
 
 import httpx
 
-from api import extract_ai_text
+from api import extract_ai_text, get_model_for_user
 from api_keys import fetch_api_keys, get_keys
 from message import download_telegram_file, send_document_bytes, send_message
 
@@ -67,10 +67,13 @@ async def _upload_file_bytes(audio_bytes: bytes, mime_type: str, display_name: s
     return None, None, "Failed to upload audio with available API keys"
 
 
-async def transcribe_audio_bytes(audio_bytes: bytes, mime_type: str, display_name: str = "audio") -> tuple[Optional[str], Optional[str]]:
+async def transcribe_audio_bytes(audio_bytes: bytes, mime_type: str, display_name: str = "audio", chat_id: Optional[int] = None) -> tuple[Optional[str], Optional[str]]:
     file_uri, used_mime, key = await _upload_file_bytes(audio_bytes, mime_type, display_name)
     if not file_uri:
         return None, key or "Failed to upload file"
+
+    # Use appropriate model based on user type
+    model = get_model_for_user(chat_id) if chat_id else "gemini-2.5-flash"
 
     body = {
         "contents": [
@@ -84,7 +87,7 @@ async def transcribe_audio_bytes(audio_bytes: bytes, mime_type: str, display_nam
         ],
         "generationConfig": {"maxOutputTokens": 65636, "temperature": 2.0},
     }
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite:generateContent?key={key}"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
     async with httpx.AsyncClient(timeout=180.0) as client:
         resp = await client.post(url, headers={"Content-Type": "application/json"}, content=json.dumps(body))
     if resp.status_code != 200:
@@ -131,7 +134,7 @@ async def transcribe_from_telegram_message(cid: int, message: dict) -> bool:
         await send_message(cid, "❌ Failed to download your audio.")
         return False
 
-    transcription, error = await transcribe_audio_bytes(audio_bytes, mime_type, display_name)
+    transcription, error = await transcribe_audio_bytes(audio_bytes, mime_type, display_name, chat_id=cid)
     if error or not transcription:
         await send_message(cid, f"❌ Transcription failed. {error or ''}".strip())
         return False

@@ -3,7 +3,8 @@ import os
 BOT_TOKEN = os.environ.get("bot_token")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 POOL_API = "https://sr-pool-api-5bm.pages.dev"
-MODEL = "gemini-2.5-flash-lite"
+USER_MODEL = "gemini-2.5-flash"
+ADMIN_MODEL = "gemini-3-flash-preview"
 ADMINS = [7026190306, 6280547580]
 TTS_API = "https://google-tts-converter-sujan.vercel.app/v1/convert"
 DEFAULT_TTS_LANG = "en"
@@ -11,14 +12,11 @@ REDIS_URL = os.environ.get("REDIS_URL", "")
 MAX_HISTORY = 30
 CONTEXT_SIZE = 30
 
-SHARE_TEXT = "🚀 Check out Mero AI Assistant — your free, fast & powerful AI companion on Telegram!\n\nhttps://t.me/meroaiassistantbot_bot"
+SHARE_TEXT = "🚀 Check out Daily AI Companion — your free, fast & powerful AI companion on Telegram!\n\nhttps://t.me/meroaiassistantbot_bot"
 
-AGENT_PROMPT = """You're an AI agent for a telegram bot built with python. Your task is to return the specified function with parameters as told. Never write anything except specified function. You have to understand prompt and return necessary function.
-You are Mero's routing brain. Analyze the user prompt and return one or multiple python function calls.
+AGENT_PROMPT = """You're an AI agent for a telegram bot built with python. Your task is to return the specified function with parameters as told. You have to understand prompt and return necessary function.
+You are Daily AI Companion's routing brain. Analyze the user prompt and return one or multiple python function calls.
 Available functions:
-sendNormalMessage(query)
-- Use for normal chat, analysis, coding, web questions, file analysis, and all default tasks.
-- query must be the actual cleaned user intent string, not placeholders like query/prompt/user_prompt or query=...
 
 saveMemory(userId, memory)
 - Use only when any part of the prompt is important to remember forever.
@@ -39,14 +37,15 @@ texttopdf(prompt)
 
 Rules:
 - You can return one or two function calls.
-- If returning multiple, put each function on a new line. For example, you can return save memory and send normal message functions at a same time.
+- If returning multiple, put each function on a new line. For example, you can return save memory and process youtube functions at the same time.
 - No markdown, no backticks, no extra text.
 - Keep parameters as strings when possible.
 - Never return JSON.
 - Never ask follow-up questions in router mode.
 - Prioritize accuracy over creativity.
-- Agent does not reply directly to users, it only returns function calls. always detect prompt and return functionss.
-- If uncertain, use sendNormalMessage("{user_prompt}").
+- The agent will only return functions for YouTube link processing, pdf creation, image generation, and to save important memories.
+- Reply if simple tasks that don't require these functions - just return the function call for the task.
+- If uncertain about special tasks, do not return any function - let the default chat handle it.
 User prompt: {user_prompt}"""
 
 TEMPLATE_PROMPTS = [

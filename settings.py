@@ -137,5 +137,5 @@ def tools_keyboard() -> dict:
 
 def share_keyboard() -> dict:
     return ikb([
-        [url_btn("📤 Share Now", f"https://t.me/share/url?url=https://t.me/MeroAIBot&text={urllib.parse.quote(SHARE_TEXT)}")],
+        [url_btn("📤 Share Now", f"https://t.me/share/url?url=https://t.me/meroaiassistantbot_bot&text={urllib.parse.quote(SHARE_TEXT)}")],
     ])
