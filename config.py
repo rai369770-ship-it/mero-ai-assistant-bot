@@ -9,6 +9,8 @@ ADMINS = [7026190306, 6280547580]
 MICROSOFT_TTS_API = "https://multi-functional-api-sujan.vercel.app/tts/Microsoft"
 DEFAULT_TTS_VOICE = "en-US-AriaNeural"
 REDIS_URL = os.environ.get("REDIS_URL", "")
+BOT_USERNAME = os.environ.get("BOT_USERNAME", "meroaiassistantbot_bot")
+BOT_MENTION_ALIASES = [a.strip() for a in os.environ.get("BOT_MENTION_ALIASES", "").split(",") if a.strip()]
 MAX_HISTORY = 30
 CONTEXT_SIZE = 30
 

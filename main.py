@@ -36,6 +36,7 @@ from agent import agent_route, execute_normal_message
 from image_generation import execute_image
 from voice_message import handle_voice
 from transcriber import transcribe_from_telegram_message
+from group_hooks import is_group_chat, extract_group_prompt
 from attachment import (
     handle_photo, handle_document, handle_audio,
     handle_video, handle_animation, handle_sticker,
@@ -705,6 +706,13 @@ async def webhook(request: Request):
         message = data["message"]
         cid = message["chat"]["id"]
         name = get_user_name(message)
+
+        group_prompt = None
+        if is_group_chat(message):
+            group_prompt = extract_group_prompt(message)
+            if not group_prompt:
+                return JSONResponse({"ok": True})
+            message["text"] = group_prompt
 
         if check_banned(cid):
             await send_banned_message(cid)
