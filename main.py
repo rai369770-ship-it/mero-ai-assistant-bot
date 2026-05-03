@@ -526,36 +526,41 @@ async def webhook(request: Request):
 
             if cb_data == "set_voice":
                 await answer_callback(cb_id)
+                from tts import fetch_microsoft_voices
+                voices = await fetch_microsoft_voices()
                 current_voice = get_user_voice(cid)
+                voice_count = len(voices)
                 await edit_message(
                     cid, mid,
-                    f"🎙️ <b>TTS Language Selection</b>\n\nCurrent: <code>{language_name(current_voice)} ({current_voice})</code>\n\nSelect a language:",
+                    f"🎙️ <b>TTS Voice Selection</b>\n\nAvailable neural voices: {voice_count}\nCurrent voice: <code>{current_voice}</code>\n\nSelect a voice (sorted by language-voice-female):",
                     parse_mode="HTML",
                     reply_markup=voice_keyboard(0),
                 )
                 return JSONResponse({"ok": True})
 
-            if cb_data.startswith("lang_page:"):
+            if cb_data.startswith("voice_page:"):
                 page = int(cb_data.split(":", 1)[1])
                 await answer_callback(cb_id)
                 current_voice = get_user_voice(cid)
+                from tts import MICROSOFT_VOICES_CACHE
+                voice_count = len(MICROSOFT_VOICES_CACHE)
                 await edit_message(
                     cid,
                     mid,
-                    f"🎙️ <b>TTS Language Selection</b>\n\nCurrent: <code>{language_name(current_voice)} ({current_voice})</code>\n\nSelect a language:",
+                    f"🎙️ <b>TTS Voice Selection</b>\n\nAvailable neural voices: {voice_count}\nCurrent voice: <code>{current_voice}</code>\n\nSelect a voice (sorted by language-voice-female):",
                     parse_mode="HTML",
                     reply_markup=voice_keyboard(page),
                 )
                 return JSONResponse({"ok": True})
 
-            if cb_data.startswith("lang:"):
-                voice_id = cb_data.split(":", 1)[1]
-                set_user_voice(cid, voice_id)
-                await answer_callback(cb_id, f"Language set: {voice_id}")
+            if cb_data.startswith("voice:"):
+                voice_name = cb_data.split(":", 1)[1]
+                set_user_voice(cid, voice_name)
+                await answer_callback(cb_id, f"Voice set: {voice_name}")
                 await edit_message(
                     cid,
                     mid,
-                    f"✅ TTS language changed to <code>{language_name(voice_id)} ({voice_id})</code>",
+                    f"✅ TTS voice changed to <code>{voice_name}</code>",
                     parse_mode="HTML",
                     reply_markup=ikb([[btn("🔙 Back", "back_settings")]]),
                 )
