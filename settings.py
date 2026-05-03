@@ -33,7 +33,7 @@ def template_prompts_keyboard() -> dict:
 
 def user_settings_keyboard() -> dict:
     return ikb([
-        [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Language", "set_voice")],
+        [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Voice", "set_voice")],
         [btn("🌡️ Temperature", "set_temp")],
         [btn("🧠 Memory", "memory_settings")],
         [btn("🧰 Tools", "open_tools")],
@@ -47,7 +47,7 @@ def user_settings_keyboard() -> dict:
 
 def admin_settings_keyboard() -> dict:
     return ikb([
-        [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Language", "set_voice")],
+        [btn("🧠 System Instructions", "set_system"), btn("🎙️ TTS Voice", "set_voice")],
         [btn("🌡️ Temperature", "set_temp")],
         [btn("🧠 Memory", "memory_settings")],
         [btn("🧰 Tools", "open_tools")],
@@ -64,25 +64,40 @@ def language_name(code: str) -> str:
     return LANGUAGE_NAME_BY_CODE.get(code, code)
 
 
+def voice_button_text(voice: dict) -> str:
+    """Generate button text for a voice in format: Language - Voice Name - Gender."""
+    lang = voice.get("language", "Unknown")
+    name = voice.get("name", "Unknown")
+    gender = voice.get("gender", "Unknown")
+    # Extract just the locale part from language if it contains more details
+    if " - " in lang:
+        lang = lang.split(" - ")[0]
+    return f"{lang} - {name} - {gender}"
+
+
 def voice_keyboard(page: int = 0, per_page: int = 20) -> dict:
-    total = len(LANGUAGES)
-    last_page = max(0, (total - 1) // per_page)
+    """Generate keyboard for Microsoft TTS voices with pagination."""
+    from tts import MICROSOFT_VOICES_CACHE
+    
+    voices = MICROSOFT_VOICES_CACHE if MICROSOFT_VOICES_CACHE else []
+    total = len(voices)
+    last_page = max(0, (total - 1) // per_page) if total > 0 else 0
     page = min(max(page, 0), last_page)
     start = page * per_page
-    items = LANGUAGES[start:start + per_page]
+    items = voices[start:start + per_page]
     rows: list[list[dict]] = []
 
     for i in range(0, len(items), 2):
-        row = [btn(f"{items[i][0]} ({items[i][1]})", f"lang:{items[i][1]}")]
+        row = [btn(voice_button_text(items[i]), f"voice:{items[i]['name']}")]
         if i + 1 < len(items):
-            row.append(btn(f"{items[i + 1][0]} ({items[i + 1][1]})", f"lang:{items[i + 1][1]}"))
+            row.append(btn(voice_button_text(items[i + 1]), f"voice:{items[i + 1]['name']}"))
         rows.append(row)
 
     nav: list[dict] = []
     if page > 0:
-        nav.append(btn("⬅️ Prev", f"lang_page:{page - 1}"))
+        nav.append(btn("⬅️ Prev", f"voice_page:{page - 1}"))
     if page < last_page:
-        nav.append(btn("Next ➡️", f"lang_page:{page + 1}"))
+        nav.append(btn("Next ➡️", f"voice_page:{page + 1}"))
     if nav:
         rows.append(nav)
 
